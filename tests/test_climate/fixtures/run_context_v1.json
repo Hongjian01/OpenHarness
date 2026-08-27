@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "version": 2,
+  "run_id": "0e8e6eb4-93f2-4ce7-8d22-91a28fa99314",
+  "objective": "分析示例温度序列并生成报告",
+  "status": "running",
+  "created_at": "2026-08-22T14:00:00Z",
+  "updated_at": "2026-08-22T14:03:00Z",
+  "steps": [
+    {
+      "step_id": "acquire",
+      "action": "acquire_data",
+      "title": "获取数据",
+      "depends_on": [],
+      "status": "succeeded",
+      "attempts": 1,
+      "input_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "started_at": "2026-08-22T14:01:00Z",
+      "finished_at": "2026-08-22T14:01:01Z",
+      "result": {
+        "artifact_ids": [
+          "data-primary"
+        ]
+      },
+      "error": null
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": "data-primary",
+      "kind": "dataset",
+      "path": ".climate/data/0e8e6eb4-93f2-4ce7-8d22-91a28fa99314/sample.csv",
+      "media_type": "text/csv",
+      "size_bytes": 12,
+      "created_by_step": "acquire",
+      "created_at": "2026-08-22T14:01:01Z"
+    }
+  ],
+  "events": [
+    {
+      "timestamp": "2026-08-22T14:00:00Z",
+      "type": "run_created",
+      "step_id": null,
+      "data": {}
+    },
+    {
+      "timestamp": "2026-08-22T14:01:00Z",
+      "type": "step_started",
+      "step_id": "acquire",
+      "data": {}
+    },
+    {
+      "timestamp": "2026-08-22T14:01:01Z",
+      "type": "step_succeeded",
+      "step_id": "acquire",
+      "data": {}
+    }
+  ],
+  "last_error": null
+}
