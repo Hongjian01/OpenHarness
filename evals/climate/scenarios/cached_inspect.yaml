@@ -1,0 +1,100 @@
+id: cached_inspect
+description: 使用仓库内固定 CSV fixture 执行 local acquire + inspect，并验证幂等与禁网
+mode: real_offline
+initial_files: {}
+fixture_files:
+  inputs/cached.csv: cached_inspect.csv
+turns:
+  - role: user
+    content: 从本地 CSV fixture 获取数据并检查统计
+expected_tool_sequence:
+  - climate_init_workflow
+  - climate_plan_steps
+  - climate_acquire_data
+  - climate_inspect_dataset
+  - climate_inspect_dataset
+tool_invocations:
+  - name: climate_init_workflow
+    session: 1
+    input:
+      objective: 检查固定 CSV fixture
+      run_id: 2c4e8a10-4b6d-4e8f-9a12-3b5c7d9e1f20
+  - name: climate_plan_steps
+    session: 1
+    input:
+      steps:
+        - step_id: acquire
+          action: acquire_data
+          title: 导入本地 CSV
+          depends_on: []
+        - step_id: inspect
+          action: inspect_dataset
+          title: 检查数据
+          depends_on: [acquire]
+        - step_id: plot
+          action: analyze_plot
+          title: 绘制图表
+          depends_on: [inspect]
+        - step_id: report
+          action: write_report
+          title: 撰写报告
+          depends_on: [inspect, plot]
+  - name: climate_acquire_data
+    session: 1
+    input:
+      step_id: acquire
+      mode: local
+      path: inputs/cached.csv
+  - name: climate_inspect_dataset
+    session: 1
+    input:
+      step_id: inspect
+  - name: climate_inspect_dataset
+    session: 1
+    input:
+      step_id: inspect
+hard_assertions:
+  - id: seq
+    type: tool_sequence
+    expected:
+      - climate_init_workflow
+      - climate_plan_steps
+      - climate_acquire_data
+      - climate_inspect_dataset
+      - climate_inspect_dataset
+  - id: tools_ok
+    type: all_tool_results_ok
+    expected: true
+  - id: inspect_stats
+    type: inspect_profile
+    expected:
+      row_count: 3
+      columns:
+        - name: date
+          dtype: string
+          null_count: 0
+        - name: temperature_c
+          dtype: float
+          null_count: 1
+          min: 10.0
+          max: 14.0
+          mean: 12.0
+        - name: precipitation_mm
+          dtype: float
+          null_count: 0
+          min: 0.0
+          max: 4.0
+          mean: 2.0
+  - id: source_copy
+    type: source_unmodified
+    expected: true
+  - id: mode
+    type: trace_mode
+    expected: real_offline
+  - id: real_exec
+    type: tools_executed_real
+    expected: true
+  - id: no_net
+    type: network_isolated
+    expected: true
+timeout_seconds: 60

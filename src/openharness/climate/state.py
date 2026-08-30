@@ -8,6 +8,7 @@ from typing import Any
 
 from openharness.climate.errors import climate_error
 from openharness.climate.models import (
+    Artifact,
     ClimateErrorObject,
     Event,
     RunContext,
@@ -145,6 +146,60 @@ class WorkflowStateMachine:
         updated = current.model_copy(update=updates)
         return self._persist(updated, expected_version=expected_version)
 
+    def accept_plan(
+        self,
+        run_id: str,
+        steps: list[Step],
+        *,
+        expected_version: int,
+        topological_ids: list[str],
+    ) -> RunContext:
+        """一次 mutation：写入 plan 并将 run initialized → running。"""
+        current = self._repo.load_run(run_id)
+        if current.version != expected_version:
+            raise climate_error(
+                "CLIMATE_VERSION_CONFLICT",
+                "Context 版本冲突",
+                details={
+                    "expected_version": expected_version,
+                    "actual_version": current.version,
+                    "field": "run",
+                },
+                workspace=self._repo.workspace,
+            )
+        if (current.status, "plan_accepted") not in _RUN_TRANSITIONS:
+            raise climate_error(
+                "CLIMATE_INVALID_TRANSITION",
+                "非法 run 状态转换",
+                details={"status": current.status, "field": "plan_accepted"},
+                workspace=self._repo.workspace,
+            )
+        if any(step.status != "pending" for step in current.steps):
+            raise climate_error(
+                "CLIMATE_INVALID_TRANSITION",
+                "已开始业务 step 后不得替换 plan",
+                details={"status": current.status, "field": "plan_accepted"},
+                workspace=self._repo.workspace,
+            )
+
+        now = _utc_now()
+        new_event = Event(
+            sequence=len(current.events) + 1,
+            timestamp=now,
+            type="plan_created",
+            step_id=None,
+            data={"step_ids": list(topological_ids)},
+        )
+        updated = current.model_copy(
+            update={
+                "status": _RUN_TRANSITIONS[(current.status, "plan_accepted")],
+                "steps": list(steps),
+                "updated_at": now,
+                "events": [*current.events, new_event],
+            }
+        )
+        return self._persist(updated, expected_version=expected_version)
+
     def apply_step_event(
         self,
         run_id: str,
@@ -155,6 +210,7 @@ class WorkflowStateMachine:
         input_hash: str | None = None,
         result: dict[str, Any] | None = None,
         error: dict[str, Any] | ClimateErrorObject | None = None,
+        artifacts: list[Artifact] | None = None,
     ) -> RunContext:
         current = self._repo.load_run(run_id)
         if current.version != expected_version:
@@ -237,9 +293,13 @@ class WorkflowStateMachine:
             step_id=step_id,
             data={},
         )
+        new_artifacts = list(current.artifacts)
+        if event == "success" and artifacts:
+            new_artifacts.extend(artifacts)
         updated = current.model_copy(
             update={
                 "steps": new_steps,
+                "artifacts": new_artifacts,
                 "events": [*current.events, new_event],
                 "updated_at": now,
             }

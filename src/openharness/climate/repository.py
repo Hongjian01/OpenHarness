@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
@@ -23,7 +25,12 @@ from openharness.climate.models import (
     loads_run_context,
     loads_workspace_index,
 )
-from openharness.climate.paths import WriteZone, resolve_workspace_path, validate_write_zone
+from openharness.climate.paths import (
+    WriteZone,
+    resolve_workspace_path,
+    to_workspace_relative_posix,
+    validate_write_zone,
+)
 from openharness.utils.file_lock import SwarmLockError, exclusive_file_lock
 from openharness.utils.fs import atomic_write_text
 
@@ -38,6 +45,15 @@ _UUID_V4 = re.compile(
 _MARKER_NAME = re.compile(
     r"^active-run-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.json$"
 )
+
+
+@dataclass(frozen=True)
+class PublishedFile:
+    """原子发布后的数据产物摘要（相对路径 + 大小 + sha256）。"""
+
+    path: str
+    size_bytes: int
+    sha256: str
 
 
 class ActiveRunMarker(BaseModel):
@@ -333,11 +349,137 @@ class ContextRepository:
             )
             return context
 
-    def list_orphan_run_ids(self) -> list[str]:
+    def list_orphan_run_ids(self, *, readonly: bool = False) -> list[str]:
         """列出 index 未引用但磁盘上有效的 run（不自动激活）。"""
+        if readonly:
+            return self._list_orphan_run_ids_readonly()
         self.ensure_layout()
         with self._lock(self._workspace_lock_path()):
             return self._list_orphan_run_ids_unlocked()
+
+    def has_pending_active_run_transaction(self) -> bool:
+        """只读检测未完成 WAL；不创建目录、不删除 marker、不加锁。"""
+        root = self._workspace / ".climate" / "transactions"
+        if not root.is_dir():
+            return False
+        try:
+            names = list(root.iterdir())
+        except OSError:
+            return False
+        return any(path.is_file() and _MARKER_NAME.match(path.name) for path in names)
+
+    def publish_run_file(
+        self,
+        run_id: str,
+        relative_posix: str,
+        data: bytes,
+        *,
+        zone: WriteZone,
+    ) -> PublishedFile:
+        """将字节原子发布到 run 的 data/output 写入区（`.part` + os.replace）。"""
+        dest = resolve_workspace_path(self._workspace, relative_posix)
+        validate_write_zone(self._workspace, dest, zone, run_id=run_id)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        part_path = dest.parent / f".{dest.name}.{uuid.uuid4()}.part"
+        try:
+            with part_path.open("wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            digest = hashlib.sha256(data).hexdigest()
+            os.replace(part_path, dest)
+        except OSError as exc:
+            with suppress(OSError):
+                part_path.unlink()
+            raise climate_error(
+                "CLIMATE_WRITE_FAILED",
+                "原子发布数据产物失败",
+                details={"path": relative_posix, "reason": type(exc).__name__},
+                workspace=self._workspace,
+            ) from exc
+        return PublishedFile(
+            path=to_workspace_relative_posix(self._workspace, dest),
+            size_bytes=len(data),
+            sha256=f"sha256:{digest}",
+        )
+
+    def copy_run_file(
+        self,
+        run_id: str,
+        relative_posix: str,
+        source: Path,
+        *,
+        zone: WriteZone,
+        chunk_size: int = 64 * 1024,
+    ) -> PublishedFile:
+        """分块复制普通文件到 run 写入区（`.part` + fsync + os.replace）。"""
+        dest = resolve_workspace_path(self._workspace, relative_posix)
+        validate_write_zone(self._workspace, dest, zone, run_id=run_id)
+        try:
+            source_resolved = source.resolve()
+            dest_resolved = dest.resolve(strict=False)
+        except OSError as exc:
+            raise climate_error(
+                "CLIMATE_INVALID_PATH",
+                "无法解析 local 复制路径",
+                details={"path": relative_posix, "reason": type(exc).__name__},
+                workspace=self._workspace,
+            ) from exc
+        if dest_resolved == source_resolved:
+            raise climate_error(
+                "CLIMATE_INVALID_PATH",
+                "local artifact 不得与源文件同一路径",
+                details={"path": relative_posix, "field": "path"},
+                workspace=self._workspace,
+            )
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        part_path = dest.parent / f".{dest.name}.{uuid.uuid4()}.part"
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            try:
+                src = source.open("rb")
+            except OSError as exc:
+                raise climate_error(
+                    "CLIMATE_INVALID_PATH",
+                    "无法读取 local 源文件",
+                    details={"path": relative_posix, "reason": type(exc).__name__},
+                    workspace=self._workspace,
+                ) from exc
+            with src, part_path.open("wb") as handle:
+                while True:
+                    chunk = src.read(chunk_size)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    digest.update(chunk)
+                    size += len(chunk)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(part_path, dest)
+        except ClimateError:
+            with suppress(OSError):
+                part_path.unlink()
+            raise
+        except OSError as exc:
+            with suppress(OSError):
+                part_path.unlink()
+            raise climate_error(
+                "CLIMATE_WRITE_FAILED",
+                "原子发布数据产物失败",
+                details={"path": relative_posix, "reason": type(exc).__name__},
+                workspace=self._workspace,
+            ) from exc
+        except Exception:
+            with suppress(OSError):
+                part_path.unlink()
+            raise
+        return PublishedFile(
+            path=to_workspace_relative_posix(self._workspace, dest),
+            size_bytes=size,
+            sha256=f"sha256:{digest.hexdigest()}",
+        )
 
     def recover_active_run_transactions(self) -> None:
         """REC-002：按文件事实完成或回滚未完成的 active-run WAL。"""
@@ -945,6 +1087,19 @@ class ContextRepository:
     def _list_orphan_run_ids_unlocked(self) -> list[str]:
         index = self._load_index_or_empty_unlocked()
         indexed = set(index.run_ids)
+        return self._scan_orphan_run_ids(indexed)
+
+    def _list_orphan_run_ids_readonly(self) -> list[str]:
+        indexed: set[str] = set()
+        index_path = self._workspace / ".climate" / "index.json"
+        if index_path.is_file():
+            try:
+                indexed = set(self._load_index_or_empty_unlocked().run_ids)
+            except ClimateError:
+                indexed = set()
+        return self._scan_orphan_run_ids(indexed)
+
+    def _scan_orphan_run_ids(self, indexed: set[str]) -> list[str]:
         runs_root = self._workspace / ".climate" / "runs"
         if not runs_root.is_dir():
             return []

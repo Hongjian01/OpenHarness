@@ -166,7 +166,12 @@ def sanitize_details(
     return cleaned
 
 
-def redact_secrets(text: str, *, workspace: Path | None = None) -> str:
+def redact_secrets(
+    text: str,
+    *,
+    workspace: Path | None = None,
+    catch_all_posix: bool = True,
+) -> str:
     """从面向用户的文本中移除绝对路径、主目录与凭证片段。"""
     if not text:
         return text
@@ -203,7 +208,8 @@ def redact_secrets(text: str, *, workspace: Path | None = None) -> str:
 
     # 兜底：形如盘符绝对路径与 POSIX 绝对路径
     result = re.sub(r"(?i)\b[A-Z]:[\\/][^\s\"']+", "<redacted>", result)
-    result = re.sub(r"(?<![\w.-])(/[^\s\"']+)", _redact_if_abs_posix, result)
+    if catch_all_posix:
+        result = re.sub(r"(?<![\w.-])(/[^\s\"']+)", _redact_if_abs_posix, result)
     result = result.replace("Traceback (most recent call last):", "<redacted>")
     return result
 

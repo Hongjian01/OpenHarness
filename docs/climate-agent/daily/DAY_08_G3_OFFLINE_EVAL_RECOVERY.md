@@ -127,12 +127,12 @@ git diff --check
 
 ## 验收清单
 
-- [ ] 三个场景均为 real_offline 真实执行。
-- [ ] 每个场景有硬断言，不只看进程退出码。
-- [ ] multiturn 不共享旧内存状态。
-- [ ] Trace 字段完整且无绝对路径/凭证。
-- [ ] synthetic 与真实统计分离。
-- [ ] Eval 运行产物未污染 Git。
+- [x] 三个场景均为 real_offline 真实执行。
+- [x] 每个场景有硬断言，不只看进程退出码。
+- [x] multiturn 不共享旧内存状态。
+- [x] Trace 字段完整且无绝对路径/凭证。
+- [x] synthetic 与真实统计分离。
+- [x] Eval 运行产物未污染 Git。
 
 ## 风险与止损
 
@@ -140,16 +140,18 @@ git diff --check
 - Eval runner 不应复制业务逻辑，应调用公开工具边界。
 - 如果场景暴露 G2 bug，先记录需求归属并最小修复，重跑 G2 Gate 相关测试。
 
-## 日终报告模板
+## 日终报告
 
 ```text
 Day 08：
-- sample_pipeline：
-- cached_inspect：
-- multiturn_recovery：
-- real_offline 命令结果：
-- Trace/脱敏检查：
+- sample_pipeline：PASS。real_offline 按依赖顺序真实调用 7 工具（init→plan→acquire(sample)→inspect→plot→report→read）；全部 ToolResult 成功；final status=completed；Context version 单调；dataset/plot/report 存在且 sha256 与 manifest/磁盘一致；报告含相对图链接、不含绝对 workspace；trace mode=real_offline。证据：tests/test_climate/test_evals.py::test_sample_pipeline_real_offline_hard_assertions。
+- cached_inspect：PASS。仓库固定 CSV fixture（evals/climate/fixtures/cached_inspect.csv）经 local acquire 复制到 run data 区，源文件 bytes/mtime 未改；inspect row_count=3、temperature_c null_count=1/mean=12.0、precipitation_mm mean=2.0 与 fixture 匹配；二次 inspect 同输入幂等（version 不变）；全程禁网。证据：::test_cached_inspect_real_offline_hard_assertions；::test_real_offline_forbids_network。
+- multiturn_recovery：PASS。第一会话 init/plan/acquire/inspect 后销毁 registry 与 ToolExecutionContext；第二会话空 metadata、不继承 eval-session-1-sentinel；climate_read_context 不传 run_id，从 index.json 定位 active run；再 plot/report；最终 completed，既有 artifact/sha256 未丢失。恢复来源 disk_context，非共享 Python 对象/Memory/synthetic。证据：::test_multiturn_recovery_destroys_memory_and_restores_from_disk。
+- real_offline 命令结果：`uv run python -m evals --suite climate --mode real_offline` exit 0，real_pass_rate=1.0，三场景顺序 sample_pipeline / cached_inspect / multiturn_recovery，均 passed、synthetic=false、tools_executed=true、counts_toward_real_pass_rate=true。`uv run python -m evals --suite climate --mode synthetic_dry_run` exit 0，显著 SYNTHETIC 标记，real_pass_rate=null，不计入真实通过率。证据：::test_cli_real_offline_runs_core_scenarios；::test_synthetic_dry_run_is_labeled_and_excluded_from_real_pass_rate。
+- Trace/脱敏检查：§12 字段齐全（run_id、工具序列、error_code、真实 duration_ms、final status/version、artifact_manifest、assertion_results）；input/output 脱敏；报告 JSON 无用户主目录、sk-、.cdsapirc、traceback。Eval 产物在已忽略的 evals/reports/*.json 与系统临时目录，未进 Git。
 - PASS/GAP 需求：
-- 回归/Ruff：
-- Day 09 blocker：
+    PASS（Day 08 范围）：EVAL-002 三核心真实离线；EVAL-001 三场景硬断言（Hook 断言仍 GAP）；TEST-005 Foundation+三场景禁网（Hook 仍 GAP）；MEM-001 多轮重启；CTX-002 G3 多轮重启；EVAL-003 保持 PASS；SDD-001 Day 08 RED→GREEN。
+    GAP：HOOK-001、SKILL-001、DOC-001、CTX-002 compact/Skill、EVAL-002 Hook 场景、CI-001 未推送 GitHub Actions、G4。未声称 Offline Engineering MVP。未提交、未推送。
+- 回归/Ruff：`uv run pytest tests/test_climate -q` → 195 passed（collect-only 同为 195）。`uv run ruff check src tests scripts evals` PASS。`git diff --check` 清洁。未跑全仓库 OpenHarness pytest（不计入 Climate Gate）。SPEC §16 已按 16 个 test_evals.py node ID 回填。
+- Day 09 blocker：无 G2/G3 Foundation 或三场景 blocker。Day 09 可开始：pre_tool_output_guard（HOOK-001）、climate-ds Skill（SKILL-001）、README 离线演示（DOC-001）。compact 恢复仍属 Skill 指导，不在今日实现。
 ```

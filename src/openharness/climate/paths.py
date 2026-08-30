@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import re
+import stat
+import sys
 from enum import Enum
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -23,6 +26,7 @@ _RESERVED_DEVICE_NAMES: frozenset[str] = frozenset(
 _DRIVE_ABS = re.compile(r"^[A-Za-z]:[\\/]")
 _DRIVE_REL = re.compile(r"^[A-Za-z]:(?![\\/])")
 _UNC = re.compile(r"^(\\\\|//)")
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 
 # STATE 写入区允许的相对路径模式（SPEC §5.1）
 _STATE_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -107,6 +111,43 @@ def resolve_workspace_path(workspace: Path, relative: str) -> Path:
         return final_resolved
 
     return current
+
+
+def validate_local_source_file(workspace: Path, relative: str) -> Path:
+    """PATH-004：local 源必须是 workspace 内普通文件，拒绝目录/设备/FIFO/socket/链接。"""
+    resolved = resolve_workspace_path(workspace, relative)
+    raw = workspace.joinpath(*relative.split("/"))
+    try:
+        info = os.lstat(raw)
+    except OSError as exc:
+        raise _invalid_path(
+            "无法读取 local 源文件类型",
+            path=relative,
+            workspace=workspace,
+        ) from exc
+
+    mode = info.st_mode
+    if stat.S_ISLNK(mode):
+        raise _invalid_path("local 源不得为 symlink", path=relative, workspace=workspace)
+    if sys.platform == "win32":
+        attrs = int(getattr(info, "st_file_attributes", 0) or 0)
+        if attrs & _FILE_ATTRIBUTE_REPARSE_POINT:
+            raise _invalid_path(
+                "local 源不得为 junction/reparse",
+                path=relative,
+                workspace=workspace,
+            )
+    if stat.S_ISDIR(mode):
+        raise _invalid_path("local 源不得为目录", path=relative, workspace=workspace)
+    if stat.S_ISCHR(mode) or stat.S_ISBLK(mode):
+        raise _invalid_path("local 源不得为设备文件", path=relative, workspace=workspace)
+    if stat.S_ISFIFO(mode):
+        raise _invalid_path("local 源不得为 FIFO", path=relative, workspace=workspace)
+    if stat.S_ISSOCK(mode):
+        raise _invalid_path("local 源不得为 socket", path=relative, workspace=workspace)
+    if not stat.S_ISREG(mode):
+        raise _invalid_path("local 源必须是普通文件", path=relative, workspace=workspace)
+    return resolved
 
 
 def to_workspace_relative_posix(workspace: Path, absolute: Path) -> str:

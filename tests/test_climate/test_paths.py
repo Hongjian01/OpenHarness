@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -240,3 +242,84 @@ def test_rejects_windows_drive_relative(tmp_path: Path) -> None:
     workspace.mkdir()
     drive = workspace.drive  # e.g. 'E:'
     _expect_invalid_path(workspace, f"{drive}relative-file.csv")
+
+
+def test_local_source_must_be_regular_workspace_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PATH-004：local 源必须是 workspace 内普通文件，拒绝目录/设备/FIFO/socket/逃逸。"""
+    from openharness.climate.paths import validate_local_source_file
+
+    workspace = (tmp_path / "ws").resolve()
+    workspace.mkdir()
+    source = workspace / "obs.csv"
+    source.write_text("date,temperature_c\n2026-02-01,1.0\n", encoding="utf-8")
+
+    resolved = validate_local_source_file(workspace, "obs.csv")
+    assert resolved == source.resolve()
+    assert resolved.is_file()
+    assert resolved.is_relative_to(workspace)
+
+    folder = workspace / "inputs"
+    folder.mkdir()
+    with pytest.raises(ClimateError) as dir_info:
+        validate_local_source_file(workspace, "inputs")
+    assert dir_info.value.code == "CLIMATE_INVALID_PATH"
+
+    with pytest.raises(ClimateError) as dotdot_info:
+        validate_local_source_file(workspace, "../secret.csv")
+    assert dotdot_info.value.code == "CLIMATE_INVALID_PATH"
+
+    with pytest.raises(ClimateError) as abs_info:
+        validate_local_source_file(workspace, "/etc/passwd")
+    assert abs_info.value.code == "CLIMATE_INVALID_PATH"
+
+    with pytest.raises(ClimateError) as unc_info:
+        validate_local_source_file(workspace, "//server/share/file.csv")
+    assert unc_info.value.code == "CLIMATE_INVALID_PATH"
+
+    outside = (tmp_path / "outside").resolve()
+    outside.mkdir()
+    (outside / "secret.csv").write_text("secret\n", encoding="utf-8")
+    link = workspace / "escape_link"
+    try:
+        _try_make_dir_link(link, outside)
+        with pytest.raises(ClimateError) as escape_info:
+            validate_local_source_file(workspace, "escape_link/secret.csv")
+        assert escape_info.value.code == "CLIMATE_INVALID_PATH"
+    except OSError:
+        pass
+
+    file_link = workspace / "file_link.csv"
+    try:
+        file_link.symlink_to(source)
+        with pytest.raises(ClimateError) as link_info:
+            validate_local_source_file(workspace, "file_link.csv")
+        assert link_info.value.code == "CLIMATE_INVALID_PATH"
+    except OSError:
+        pass
+
+    original_lstat = os.lstat
+
+    def fake_lstat(path: str | os.PathLike[str], *args: object, **kwargs: object) -> os.stat_result:
+        result = original_lstat(path, *args, **kwargs)
+        if Path(path).resolve() == source.resolve():
+            return SimpleNamespace(  # type: ignore[return-value]
+                st_mode=stat.S_IFCHR | 0o666,
+                st_file_attributes=getattr(result, "st_file_attributes", 0),
+            )
+        return result
+
+    monkeypatch.setattr(os, "lstat", fake_lstat)
+    with pytest.raises(ClimateError) as device_info:
+        validate_local_source_file(workspace, "obs.csv")
+    assert device_info.value.code == "CLIMATE_INVALID_PATH"
+    monkeypatch.undo()
+
+    if sys.platform == "win32":
+        return
+    fifo = workspace / "pipe.csv"
+    os.mkfifo(fifo)
+    with pytest.raises(ClimateError) as fifo_info:
+        validate_local_source_file(workspace, "pipe.csv")
+    assert fifo_info.value.code == "CLIMATE_INVALID_PATH"

@@ -28,10 +28,18 @@ htmlcov/
 frontend/terminal/node_modules/
 
 # User data (never commit API keys or session data)
-.openharness/
+.openharness/*
+!.openharness/skills/
+.openharness/skills/*
+!.openharness/skills/climate-ds/
+.openharness/skills/climate-ds/*
+!.openharness/skills/climate-ds/SKILL.md
 react_tui_smoke.txt
 
 # OS
 .DS_Store
 Thumbs.db
 uv.lock
+
+# Climate Eval 运行产物
+evals/reports/*.json
