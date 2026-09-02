@@ -2,9 +2,10 @@
 
 ## 0. 必背边界
 
-截至 2026-09-01 Day 15 本机验收：G0～G3 称谓仍是 **ClimWorkflow Offline Engineering MVP**；
-G4 本机 PASS（真实 CDS smoke 1 passed；固定配置 `real_agent` 3/3）。GitHub Actions 未推送，
-不得声称“CI 已绿”。下文若仍出现 G0“尚未实现”语气，以本节为准。
+截至 2026-09-02：G0～G3 称谓仍是 **ClimWorkflow Offline Engineering MVP**；G4 本机 PASS
+（真实 CDS smoke 1 passed；固定配置 `real_agent` 3/3）。fork PR #1 GitHub Actions CI #3
+（`52fa338`）已绿，可以说“自己 fork 的 CI 已绿”，不得说“已合入 HKUDS”。下文若仍出现
+G0“尚未实现”语气，以本节为准。
 
 当前必须说：
 
@@ -293,7 +294,7 @@ QueryEngine 调工具 → Climate Tool（Pydantic + 路径再校验）→ pipeli
 4. 路径安全与 `.cdsapirc` 全模式拒绝。
 5. WAL/孤儿 run/幂等。
 6. Eval 真实性：禁网、Hook provenance、3/3 baseline。
-7. 限制：未推送 GitHub CI；Windows 上游 23 fail；不是通用调度器。
+7. 限制：fork CI 已绿但未合入 HKUDS；Windows 上游 23 fail；不是通用调度器。
 
 ### 三个深挖问答
 

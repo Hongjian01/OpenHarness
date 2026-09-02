@@ -416,8 +416,10 @@ uv run pytest -q
 
 ClimWorkflow 是运行在 OpenHarness 上的可恢复气候数据工作流。Day 10（2026-08-28）
 总验收后称谓为 **ClimWorkflow Offline Engineering MVP**。Day 15（2026-09-01）本机
-验收 G4（真实 CDS smoke + 固定配置 `real_agent` 3/3）。GitHub Actions 尚未推送，
-远程 CI 证据仍为 GAP。
+验收 G4（真实 CDS smoke + 固定配置 `real_agent` 3/3）。2026-09-02 fork PR
+[#1](https://github.com/Hongjian01/OpenHarness/pull/1) 的 GitHub Actions CI #3
+（`52fa338`，[run 33604624255](https://github.com/Hongjian01/OpenHarness/actions/runs/33604624255)）
+Python 3.10/3.11 测试、Ruff、Frontend typecheck 全绿。这不是合入上游 HKUDS。
 
 本节先给**离线演示**：真实 Climate 工具，不接入 CDS，不调用真实模型，不要求密钥。
 G4 命令单独可选。
@@ -606,7 +608,7 @@ profile `openai-compatible`，`max_turns=200`，1 天小区域 ERA5 NetCDF，
 - workspace 外路径禁止。
 - `PRE_TOOL_USE` 可在 `climate_write_report.execute` 前阻断。
 - Windows 全量 `pytest -q` 仍有上游 OpenHarness 环境失败；Climate 回归以 `tests/test_climate` 为准。
-- 本分支尚未推送，GitHub Actions Python 3.10/3.11 无远程证据。
+- 2026-09-02 fork GitHub Actions Python 3.10/3.11、Ruff、Frontend typecheck 已绿（`52fa338`，[run 33604624255](https://github.com/Hongjian01/OpenHarness/actions/runs/33604624255)）。未合入上游 HKUDS。
 - 不要提交凭证、`.cdsapirc`、真实 ERA5 下载、`.part`、缓存或 `evals/reports/*.json`。
 
 ### 测试命令与常见错误码

@@ -854,7 +854,11 @@ For older versions that do not include this fix, use a terminal that sends a sta
 ClimWorkflow is a recoverable climate-data workflow on OpenHarness. Day 10
 (2026-08-28) accepted G0–G3 as **ClimWorkflow Offline Engineering MVP**. Day 15
 (2026-09-01) locally accepted G4 (real CDS smoke + fixed-config `real_agent`
-3/3). GitHub Actions has not been pushed, so remote CI evidence is still a GAP.
+3/3). On 2026-09-02, GitHub Actions on fork PR
+[#1](https://github.com/Hongjian01/OpenHarness/pull/1) CI #3 (`52fa338`,
+[run 33604624255](https://github.com/Hongjian01/OpenHarness/actions/runs/33604624255))
+passed Python 3.10/3.11 tests, Ruff, and frontend typecheck. This is not a merge
+into upstream HKUDS.
 
 This section first documents the **offline demo**: real Climate tools, no CDS,
 no live model, no API key. G4 commands are separate and optional.
@@ -1047,7 +1051,10 @@ code/config/scenario/skill/commit restarts the 3-run count.
 - `PRE_TOOL_USE` can block `climate_write_report` before `execute`.
 - Windows full `pytest -q` still has upstream OpenHarness environment failures;
   Climate regression is `tests/test_climate`.
-- GitHub Actions Python 3.10/3.11 has not been pushed from this branch.
+- Fork GitHub Actions Python 3.10/3.11, Ruff, and frontend typecheck passed on
+  2026-09-02 (`52fa338`,
+  [run 33604624255](https://github.com/Hongjian01/OpenHarness/actions/runs/33604624255)).
+  This is not merged into upstream HKUDS.
 - Do not commit credentials, `.cdsapirc`, downloaded ERA5, `.part`, caches, or
   `evals/reports/*.json`.
 

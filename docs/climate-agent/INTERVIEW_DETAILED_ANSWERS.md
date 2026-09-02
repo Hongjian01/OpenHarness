@@ -4,14 +4,15 @@
 
 本文用于准备 AI Agent 平台、Agent 应用工程和大模型应用开发岗位面试。
 
-截至 2026-09-01 Day 15 本机验收：G0～G3 为 **ClimWorkflow Offline Engineering MVP**；
-G4 本机 PASS（`climate_integration` 1 passed；`real_agent` baseline 3/3）。GitHub Actions
-未推送。因此面试必须区分：
+截至 2026-09-02：G0～G3 为 **ClimWorkflow Offline Engineering MVP**；G4 本机 PASS
+（`climate_integration` 1 passed；`real_agent` baseline 3/3）。fork PR #1 的 GitHub
+Actions CI #3（`52fa338`，run 33604624255）Python 3.10/3.11、Ruff、Frontend 全绿。
+因此面试必须区分：
 
 - **OpenHarness 已有能力**：可以用现在的源码解释实现原理，不能说成自己写的 Runtime。
 - **ClimWorkflow 已验证能力**：G1～G4 适用需求均有 pytest node ID；数字以 SPEC / README
-  Day 15 实测表为准。
-- **仍为 GAP**：未推送的 GitHub Actions；Windows 上游环境失败不计入 Climate。
+  Day 15 实测表为准；远程 CI 以 fork PR #1 的绿勾为准。
+- **仍须说明**：Windows 上游环境失败不计入 Climate；未合入上游 HKUDS。
 
 不得把 OpenHarness 上游已有代码描述成自己的实现。完成项目后，准确表述应是：
 
