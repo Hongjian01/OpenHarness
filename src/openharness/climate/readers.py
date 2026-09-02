@@ -271,7 +271,10 @@ class GribReaderAdapter(ScientificReader):
     def __enter__(self) -> GribReaderAdapter:
         if not formats_mod.eccodes_available():
             raise _missing("eccodes")
-        import eccodes
+        try:
+            import eccodes
+        except (ImportError, RuntimeError, OSError):
+            raise _missing("eccodes") from None
 
         self._eccodes = eccodes
         try:

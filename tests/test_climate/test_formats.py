@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import builtins
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -147,6 +149,22 @@ def test_optional_eccodes_missing_is_stable_error(monkeypatch: pytest.MonkeyPatc
     assert "token" not in err.message.lower()
 
 
+def test_eccodes_available_false_when_native_library_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """缺 libeccodes 时 import 抛 RuntimeError，必须视为未安装，不能打穿测试。"""
+    monkeypatch.delitem(sys.modules, "eccodes", raising=False)
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "eccodes":
+            raise RuntimeError("Cannot find the ecCodes library")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    assert eccodes_available() is False
+
+
 def test_readers_are_optional_and_currently_installed() -> None:
     """dev extra 安装后默认 CI 应能读取；缺库路径由上两项覆盖。"""
     assert netcdf4_available() is True
@@ -157,6 +175,8 @@ def test_pyproject_registers_climate_integration_marker() -> None:
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert "climate_integration" in text
     assert "markers" in text
+    # uv 依赖 PyPI index metadata；必须显式钉 eccodeslib，Linux CI 才能找到原生库。
+    assert "eccodeslib>=2.48.0; sys_platform != 'win32'" in text
 
 
 def test_default_skip_reason_has_no_credentials_or_paths(

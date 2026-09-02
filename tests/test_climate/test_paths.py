@@ -300,12 +300,18 @@ def test_local_source_must_be_regular_workspace_file(
         pass
 
     original_lstat = os.lstat
+    # 预先用 abspath 对齐，禁止在假 lstat 里调用 Path.resolve()：
+    # POSIX 的 resolve 会再进 os.lstat，打补丁后会无限递归。
+    source_abs = os.path.normcase(os.path.abspath(source))
 
     def fake_lstat(path: str | os.PathLike[str], *args: object, **kwargs: object) -> os.stat_result:
         result = original_lstat(path, *args, **kwargs)
-        if Path(path).resolve() == source.resolve():
+        candidate = os.path.normcase(os.path.abspath(os.fspath(path)))
+        if candidate == source_abs:
             return SimpleNamespace(  # type: ignore[return-value]
                 st_mode=stat.S_IFCHR | 0o666,
+                st_dev=getattr(result, "st_dev", 0),
+                st_ino=getattr(result, "st_ino", 0),
                 st_file_attributes=getattr(result, "st_file_attributes", 0),
             )
         return result

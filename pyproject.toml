@@ -46,6 +46,9 @@ dev = [
     "matplotlib>=3.7.0",
     "netCDF4>=1.7.4",
     "eccodes>=2.48.0",
+    # PyPI 先上传 Windows wheel，index metadata 不含 eccodeslib；uv 在 Linux/macOS
+    # 不会自动拉原生库，import 时抛 RuntimeError: Cannot find the ecCodes library。
+    "eccodeslib>=2.48.0; sys_platform != 'win32'",
 ]
 plot = [
     "matplotlib>=3.7.0",
@@ -53,6 +56,7 @@ plot = [
 climate = [
     "netCDF4>=1.7.4",
     "eccodes>=2.48.0",
+    "eccodeslib>=2.48.0; sys_platform != 'win32'",
     "cdsapi>=0.7.7",
 ]
 

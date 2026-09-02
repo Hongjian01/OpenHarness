@@ -69,10 +69,13 @@ def netcdf4_available() -> bool:
 
 
 def eccodes_available() -> bool:
-    """检测 GRIB 读取库；测试可 monkeypatch。"""
+    """检测 GRIB 读取库；测试可 monkeypatch。
+
+    Python 包在、原生 libeccodes 不在时，import 抛 RuntimeError 而非 ImportError。
+    """
     try:
         import eccodes  # noqa: F401
-    except ImportError:
+    except (ImportError, RuntimeError, OSError):
         return False
     return True
 
