@@ -11,7 +11,7 @@ import socket
 import sys
 import time
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -239,7 +239,7 @@ async def run_real_offline_async(scenario: Scenario, *, workspace: Path) -> Trac
         )
 
     duration_ms = max(0, int((time.perf_counter() - started) * 1000))
-    finished_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    finished_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     source_after = _source_snapshot(workspace, scenario)
     if source_before is not None:
         recovery["source_unmodified"] = source_before == source_after

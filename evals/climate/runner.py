@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -360,7 +360,7 @@ def _run_real_offline_suite(suite: str, scenarios: list[Scenario]) -> int:
 
 def _run_synthetic(scenario: Scenario) -> TraceRecord:
     """只生成 wiring 验证数据，明确不执行工具/模型。"""
-    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     tool_calls = []
     for index, name in enumerate(scenario.expected_tool_sequence, start=1):
         tool_calls.append(

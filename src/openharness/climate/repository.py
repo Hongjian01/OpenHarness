@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -229,7 +229,7 @@ class ContextRepository:
             except ClimateMigrationAbort as exc:
                 raise exc.error from None
 
-            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
             backup_rel = f".climate/backups/{run_id}-context-v1-{stamp}.json"
             backup_path = resolve_workspace_path(self._workspace, backup_rel)
             validate_write_zone(self._workspace, backup_path, WriteZone.STATE)
@@ -1124,4 +1124,4 @@ class ClimateMigrationAbort(Exception):
 
 
 def _utc_now() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

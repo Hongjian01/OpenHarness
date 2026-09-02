@@ -6,7 +6,7 @@ import asyncio
 import json
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -149,7 +149,7 @@ async def run_real_agent_once_async(
             "run_id": None,
             "mode": EvalMode.real_agent,
             "started_at": started_at,
-            "finished_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "finished_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "duration_ms": duration_ms,
             "tool_calls": tool_calls,
             "hook_events": [],
