@@ -95,7 +95,18 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         registry.register(ReadMcpResourceTool(mcp_manager))
         for tool_info in mcp_manager.list_tools():
             registry.register(McpToolAdapter(mcp_manager, tool_info))
+    _register_climate_tools(registry)
     return registry
+
+
+def _register_climate_tools(registry: ToolRegistry) -> None:
+    """一次性注册完整 7 个 Climate 工具；名称冲突时拒绝而不是静默覆盖。"""
+    from openharness.climate.registry import create_climate_tool_registry
+
+    for tool in create_climate_tool_registry().list_tools():
+        if registry.get(tool.name) is not None:
+            raise ValueError(f"工具名称已注册: {tool.name}")
+        registry.register(tool)
 
 
 __all__ = [

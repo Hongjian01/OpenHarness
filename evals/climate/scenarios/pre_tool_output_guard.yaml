@@ -1,0 +1,103 @@
+id: pre_tool_output_guard
+description: >
+  PRE_TOOL_USE Hook 在 climate_write_report.execute 前拒绝 summary 含固定
+  blocked-output-secret 标记、但可通过工具 schema 的调用；证明阻断来自 Hook 而非工具校验。
+mode: real_offline
+initial_files: {}
+turns:
+  - role: user
+    content: 完成离线 sample 流水线并尝试写入含输出策略测试标记的报告
+expected_tool_sequence:
+  - climate_init_workflow
+  - climate_plan_steps
+  - climate_acquire_data
+  - climate_inspect_dataset
+  - climate_analyze_plot
+  - climate_write_report
+tool_invocations:
+  - name: climate_init_workflow
+    session: 1
+    input:
+      objective: Hook 输出策略场景：分析示例温度序列
+      run_id: 4e6a0c32-6d8f-4a01-9c34-5d7e9f1b2c43
+  - name: climate_plan_steps
+    session: 1
+    input:
+      steps:
+        - step_id: acquire
+          action: acquire_data
+          title: 获取数据
+          depends_on: []
+        - step_id: inspect
+          action: inspect_dataset
+          title: 检查数据
+          depends_on: [acquire]
+        - step_id: plot
+          action: analyze_plot
+          title: 绘制图表
+          depends_on: [inspect]
+        - step_id: report
+          action: write_report
+          title: 撰写报告
+          depends_on: [inspect, plot]
+  - name: climate_acquire_data
+    session: 1
+    input:
+      step_id: acquire
+      mode: sample
+  - name: climate_inspect_dataset
+    session: 1
+    input:
+      step_id: inspect
+  - name: climate_analyze_plot
+    session: 1
+    input:
+      step_id: plot
+      chart_type: line
+      x: date
+      y: temperature_c
+      title: Hook 场景温度图
+  - name: climate_write_report
+    session: 1
+    input:
+      step_id: report
+      title: 输出策略拦截测试
+      summary: 该调用含测试标记 blocked-output-secret，工具 schema 应接受该普通字符串。
+hard_assertions:
+  - id: seq
+    type: tool_sequence
+    expected:
+      - climate_init_workflow
+      - climate_plan_steps
+      - climate_acquire_data
+      - climate_inspect_dataset
+      - climate_analyze_plot
+      - climate_write_report
+  - id: hook
+    type: hook_event
+    expected:
+      event: pre_tool_use
+      tool_name: climate_write_report
+      blocked: true
+  - id: hook_code
+    type: error_code
+    expected: CLIMATE_HOOK_BLOCKED
+  - id: provenance
+    type: hook_provenance
+    expected: hook
+  - id: frozen
+    type: blocked_side_effect_free
+    expected: true
+  - id: status
+    type: final_run_status
+    expected: running
+  - id: artifacts
+    type: artifacts_match_manifest
+    expected: [dataset, plot]
+  - id: real
+    type: tools_executed_real
+    expected: true
+  - id: no_net
+    type: network_isolated
+    expected: true
+timeout_seconds: 120

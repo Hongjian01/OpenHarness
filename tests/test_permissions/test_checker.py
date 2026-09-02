@@ -148,6 +148,23 @@ class TestSensitivePathProtection:
         assert decision.allowed is False
         assert ".ssh" in decision.reason
 
+    @pytest.mark.parametrize(
+        "mode",
+        [PermissionMode.FULL_AUTO, PermissionMode.DEFAULT, PermissionMode.PLAN],
+        ids=["full_auto", "default", "plan"],
+    )
+    def test_cdsapirc_blocked_in_all_modes(self, mode):
+        """SEC-002：.cdsapirc 在全部权限模式下均不可被通用工具读取。"""
+        checker = PermissionChecker(PermissionSettings(mode=mode))
+        for path in (
+            "/home/user/.cdsapirc",
+            "/Users/user/.cdsapirc",
+            "C:/Users/user/.cdsapirc",
+        ):
+            decision = checker.evaluate("read_file", is_read_only=True, file_path=path)
+            assert decision.allowed is False, f"Expected {path} denied in {mode}"
+            assert ".cdsapirc" in decision.reason
+
     def test_full_auto_blocks_sensitive_paths(self):
         """FULL_AUTO normally allows everything, but sensitive paths are still denied."""
         checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
@@ -161,6 +178,7 @@ class TestSensitivePathProtection:
             "/home/user/.kube/config",
             "/home/user/.openharness/credentials.json",
             "/home/user/.openharness/copilot_auth.json",
+            "/home/user/.cdsapirc",
         ):
             decision = checker.evaluate("read_file", is_read_only=True, file_path=path)
             assert decision.allowed is False, f"Expected {path} to be denied"
@@ -223,6 +241,7 @@ class TestSensitivePathProtection:
             "*/.kube/config": "/home/u/.kube/config",
             "*/.openharness/credentials.json": "/home/u/.openharness/credentials.json",
             "*/.openharness/copilot_auth.json": "/home/u/.openharness/copilot_auth.json",
+            "*/.cdsapirc": "/home/u/.cdsapirc",
         }
         test_path = example_paths[pattern]
         checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))

@@ -1,0 +1,15 @@
+id: hard_assertion_fail
+description: 证明任一 hard assertion 失败时进程非零退出
+mode: synthetic_dry_run
+initial_files: {}
+turns:
+  - role: user
+    content: 触发失败断言
+expected_tool_sequence:
+  - climate_init_workflow
+hard_assertions:
+  - id: impossible
+    type: tool_sequence
+    expected:
+      - this_tool_does_not_exist
+timeout_seconds: 5

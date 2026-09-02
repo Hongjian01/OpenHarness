@@ -1,0 +1,65 @@
+id: cds_minimal_smoke
+description: G4 真实 Agent 最小 CDS smoke：固定模型调用七工具，禁止 fallback
+mode: real_agent
+initial_files: {}
+turns:
+  - role: user
+    content: |
+      在当前空 workspace 用 Climate 七工具完成一次最小 ERA5 分析并写报告。
+      必须按顺序调用：climate_init_workflow → climate_plan_steps → climate_acquire_data(mode=cds) → climate_inspect_dataset → climate_analyze_plot → climate_write_report → climate_read_context。
+      acquire 必须使用 cds，allow_sample_fallback=false，禁止 sample/local。
+      plot 使用 histogram，y=t2m。
+      不要读取 .cdsapirc、credentials.json 或任何密钥。
+expected_tool_sequence:
+  - climate_init_workflow
+  - climate_plan_steps
+  - climate_acquire_data
+  - climate_inspect_dataset
+  - climate_analyze_plot
+  - climate_write_report
+  - climate_read_context
+hard_assertions:
+  - id: dag
+    type: climate_dag_order
+    expected:
+      - climate_init_workflow
+      - climate_plan_steps
+      - climate_acquire_data
+      - climate_inspect_dataset
+      - climate_analyze_plot
+      - climate_write_report
+  - id: known_tools
+    type: unknown_tools_forbidden
+    expected:
+      - climate_init_workflow
+      - climate_plan_steps
+      - climate_acquire_data
+      - climate_inspect_dataset
+      - climate_analyze_plot
+      - climate_write_report
+      - climate_read_context
+  - id: tools_ok
+    type: all_tool_results_ok
+    expected: true
+  - id: status
+    type: final_run_status
+    expected: completed
+  - id: versions
+    type: context_version_monotonic
+    expected: true
+  - id: artifacts
+    type: artifacts_match_manifest
+    expected: [dataset, plot, report]
+  - id: cds
+    type: cds_mode_no_fallback
+    expected: true
+  - id: mode
+    type: trace_mode
+    expected: real_agent
+  - id: real_exec
+    type: model_and_tools_real
+    expected: true
+  - id: timeout
+    type: duration_within_timeout
+    expected: 600
+timeout_seconds: 600

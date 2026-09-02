@@ -1,0 +1,110 @@
+id: multiturn_recovery
+description: 第一会话 init/plan/acquire/inspect 后销毁内存；新会话只从磁盘 Context 恢复并继续 plot/report
+mode: real_offline
+initial_files: {}
+turns:
+  - role: user
+    content: 第一会话完成数据获取与检查后结束
+  - role: user
+    content: 新会话仅凭 workspace Context 继续绘图与报告
+expected_tool_sequence:
+  - climate_init_workflow
+  - climate_plan_steps
+  - climate_acquire_data
+  - climate_inspect_dataset
+  - climate_read_context
+  - climate_analyze_plot
+  - climate_write_report
+tool_invocations:
+  - name: climate_init_workflow
+    session: 1
+    input:
+      objective: 多轮恢复：分析示例温度序列并生成报告
+      run_id: 3d5f9b21-5c7e-4f90-8b23-4c6d8e0f1a32
+  - name: climate_plan_steps
+    session: 1
+    input:
+      steps:
+        - step_id: acquire
+          action: acquire_data
+          title: 获取数据
+          depends_on: []
+        - step_id: inspect
+          action: inspect_dataset
+          title: 检查数据
+          depends_on: [acquire]
+        - step_id: plot
+          action: analyze_plot
+          title: 绘制图表
+          depends_on: [inspect]
+        - step_id: report
+          action: write_report
+          title: 撰写报告
+          depends_on: [inspect, plot]
+  - name: climate_acquire_data
+    session: 1
+    input:
+      step_id: acquire
+      mode: sample
+  - name: climate_inspect_dataset
+    session: 1
+    input:
+      step_id: inspect
+  - name: climate_read_context
+    session: 2
+    input:
+      include_events: true
+      event_limit: 100
+  - name: climate_analyze_plot
+    session: 2
+    input:
+      step_id: plot
+      chart_type: line
+      x: date
+      y: temperature_c
+      title: 恢复后温度图
+  - name: climate_write_report
+    session: 2
+    input:
+      step_id: report
+      title: 恢复后气候报告
+      summary: 仅从磁盘 Context 恢复后完成。
+hard_assertions:
+  - id: seq
+    type: tool_sequence
+    expected:
+      - climate_init_workflow
+      - climate_plan_steps
+      - climate_acquire_data
+      - climate_inspect_dataset
+      - climate_read_context
+      - climate_analyze_plot
+      - climate_write_report
+  - id: tools_ok
+    type: all_tool_results_ok
+    expected: true
+  - id: status
+    type: final_run_status
+    expected: completed
+  - id: versions
+    type: context_version_monotonic
+    expected: true
+  - id: artifacts
+    type: artifacts_match_manifest
+    expected: [dataset, plot, report]
+  - id: recovery
+    type: recovery_from_disk
+    expected: true
+  - id: no_meta
+    type: no_inherited_metadata
+    expected: true
+  - id: mode
+    type: trace_mode
+    expected: real_offline
+  - id: real_exec
+    type: tools_executed_real
+    expected: true
+  - id: no_net
+    type: network_isolated
+    expected: true
+timeout_seconds: 120

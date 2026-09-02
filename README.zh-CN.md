@@ -412,6 +412,229 @@ uv run pytest -q
 
 ---
 
+## ClimWorkflow 离线 Demo（Offline Engineering MVP）
+
+ClimWorkflow 是运行在 OpenHarness 上的可恢复气候数据工作流。Day 10（2026-08-28）
+总验收后称谓为 **ClimWorkflow Offline Engineering MVP**。Day 15（2026-09-01）本机
+验收 G4（真实 CDS smoke + 固定配置 `real_agent` 3/3）。2026-09-02 fork PR
+[#1](https://github.com/Hongjian01/OpenHarness/pull/1) 的 GitHub Actions CI #3
+（`52fa338`，[run 33604624255](https://github.com/Hongjian01/OpenHarness/actions/runs/33604624255)）
+Python 3.10/3.11 测试、Ruff、Frontend typecheck 全绿。这不是合入上游 HKUDS。
+
+本节先给**离线演示**：真实 Climate 工具，不接入 CDS，不调用真实模型，不要求密钥。
+G4 命令单独可选。
+
+架构：
+
+```text
+Agent loop（QueryEngine，不改语义）
+  → 7 个类型化 Climate 工具（默认 ToolRegistry）
+      → pipeline + 版本化状态机
+          → ContextRepository（原子写、双层文件锁、WAL）
+              → .climate/（index、runs、data、output、locks、事务、备份）
+  → Eval：real_offline | synthetic_dry_run | real_agent
+  → PRE_TOOL_USE Hook 守卫（execute 之前）
+  → G4 可选：cdsapi（外部凭证）+ NetCDF/GRIB reader
+Memory / compact 只作导航；磁盘 Context 才是权威状态。
+```
+
+### 安装与测试前置
+
+在仓库根目录：
+
+```powershell
+uv sync --extra dev
+uv run pytest tests/test_climate -q
+```
+
+离线 Demo 不需要 API key。除非显式跑 marked CDS 测试，保持 `CLIMATE_INTEGRATION=0`。
+
+### 从空 workspace 执行 sample Demo
+
+不要发明新 CLI。使用已有 `evals.climate.real_offline.run_real_offline`：
+
+```powershell
+$ws = Join-Path $env:TEMP "climworkflow-offline-demo"
+if (Test-Path $ws) { Remove-Item -Recurse -Force $ws }
+New-Item -ItemType Directory -Path $ws | Out-Null
+
+uv run python -c @"
+from pathlib import Path
+from evals.climate.assertions import evaluate_hard_assertions
+from evals.climate.models import load_scenario
+from evals.climate.real_offline import run_real_offline
+
+workspace = Path(r'$ws')
+scenario = load_scenario(Path('evals/climate/scenarios/sample_pipeline.yaml'))
+trace = run_real_offline(scenario, workspace=workspace)
+results = evaluate_hard_assertions(trace, list(scenario.hard_assertions))
+assert all(item.passed for item in results), results
+print('status=', trace.final_run_status)
+print('run_id=', trace.run_id)
+print('version=', trace.final_context_version)
+"@
+```
+
+预期 `$ws/.climate/`：
+
+```text
+.climate/index.json
+.climate/runs/<run_id>/context.json
+.climate/data/<run_id>/          # sample 数据集
+.climate/output/<run_id>/*.png 或 *.svg
+.climate/output/<run_id>/report.md
+```
+
+`report.md` 含相对图链接，不含绝对 workspace 路径。
+
+local CSV Demo（复制 fixture，不修改源文件）：
+
+```powershell
+uv run python -c @"
+from pathlib import Path
+from evals.climate.assertions import evaluate_hard_assertions
+from evals.climate.models import load_scenario
+from evals.climate.real_offline import run_real_offline
+
+workspace = Path(r'$ws') / 'local'
+workspace.mkdir(parents=True, exist_ok=True)
+scenario = load_scenario(Path('evals/climate/scenarios/cached_inspect.yaml'))
+trace = run_real_offline(scenario, workspace=workspace)
+results = evaluate_hard_assertions(trace, list(scenario.hard_assertions))
+assert all(item.passed for item in results), results
+print('local status=', trace.final_run_status)
+"@
+```
+
+`cached_inspect` 只执行 local acquire + inspect，最终状态为 `running`（无 plot/report）。
+`inputs/` 下的源 CSV 被复制，不被修改。
+
+### 模拟新会话恢复
+
+销毁内存对象后，只凭磁盘 Context 恢复。必须先 `climate_read_context`，不得根据
+compact summary 猜测 run/step 已成功：
+
+```powershell
+uv run python -c @"
+import asyncio, json
+from pathlib import Path
+from openharness.climate.registry import create_climate_tool_registry
+from openharness.tools.base import ToolExecutionContext
+
+ws = Path(r'$ws')
+
+async def main():
+    tool = create_climate_tool_registry().get('climate_read_context')
+    result = await tool.execute(
+        tool.input_model.model_validate({'include_events': True, 'event_limit': 20}),
+        ToolExecutionContext(cwd=ws),
+    )
+    payload = json.loads(result.output)
+    data = payload.get('data') or {}
+    print('ok=', payload.get('ok'))
+    print('status=', data.get('status') or payload.get('status'))
+    print('run_id=', payload.get('run_id') or data.get('run_id'))
+    print('active_run_id=', data.get('active_run_id'))
+
+asyncio.run(main())
+"@
+```
+
+### `real_offline` 与 `synthetic_dry_run` 与 `real_agent`
+
+```powershell
+uv run python -m evals --suite climate --mode real_offline
+uv run python -m evals --suite climate --mode synthetic_dry_run
+```
+
+| 模式 | 证明什么 | 计入真实通过率 |
+|------|----------|----------------|
+| `real_offline` | 真实 Climate 工具，禁网，无模型 | 是 |
+| `synthetic_dry_run` | 只验证 scenario 解析、断言 wiring 和报告格式 | 否 |
+| `real_agent` | 固定模型 + 真实 Climate 工具 + CDS；需要 `--agent-config` | 仅 3 次运行且 ≥2 次硬断言通过后计入 |
+
+G3 在缺少 `--agent-config` 时仍以 `CLIMATE_DEPENDENCY_MISSING` 拒绝 `real_agent`。
+G4 入口（凭证不进仓库）：
+
+```powershell
+uv run python -m evals --suite climate --mode real_agent `
+  --agent-config evals/configs/climate-real.json `
+  --runs 3 `
+  --baseline-out evals/baselines/climate-real-<commit>.json
+```
+
+### Day 15 实测（2026-09-01，本机 Windows）
+
+下表数字来自本次总验收命令输出，不是估算。Day 10（2026-08-28）G3 历史数字：Climate
+198 passed；`real_offline` 4/4，墙钟 10850 ms。
+
+| 命令 | 结果 | 来源 |
+|------|------|------|
+| `uv run pytest tests/test_climate --collect-only -q` | **258 tests** | Climate collect |
+| `uv run pytest tests/test_climate -q`（`CLIMATE_INTEGRATION=0`） | **257 passed, 1 skipped in 124.29s** | Climate 套件 |
+| `uv run pytest -m climate_integration tests/test_climate/test_cds.py -q` | **1 passed in 47.18s** | marked CDS smoke |
+| `climate-ds` Skill 测试 | 2 passed（含于全量 pytest） | `tests/test_skills/test_climate_skill.py` |
+| `uv run pytest -q`（`CLIMATE_INTEGRATION=0`） | 1388 passed, **23 failed**, 12 skipped in 215.36s | 失败均为 OpenHarness Windows POSIX/时区/符号链接/cmd；**0 个 Climate 失败** |
+| `uv run ruff check src tests scripts evals` | All checks passed | Ruff |
+| `uv run python -m evals --suite climate --mode real_offline` | 4/4 场景，`real_pass_rate=1.0`，墙钟 **47102 ms** | CLI |
+| `uv run python -m evals --suite climate --mode synthetic_dry_run` | 标记 SYNTHETIC DRY-RUN；`counts_toward_real_pass_rate=false` | CLI |
+| `evals/baselines/climate-real-9b592ba.json` | **passes=3/3**，`min_passes=2`，三次独立 workspace | Day 14 固定配置 baseline |
+
+`real_offline` 场景 Trace（本次运行）：
+
+| 场景 | duration_ms | 最终状态 | 说明 |
+|------|------------:|----------|------|
+| `sample_pipeline` | 777 | `completed` | 7 工具序列；4 个 artifact（dataset/profile/plot/report） |
+| `cached_inspect` | 215 | `running` | local CSV 复制 + inspect 重放；源文件未改 |
+| `multiturn_recovery` | 476 | `completed` | 销毁会话后只从磁盘 Context 恢复 |
+| `pre_tool_output_guard` | 4641 | `running` | `PRE_TOOL_USE` 阻断 `climate_write_report`；execute=0；`CLIMATE_HOOK_BLOCKED` |
+
+sample 流水线工具耗时（ms）：init 18，plan 48，acquire 54，inspect 56，plot 472，report 84，read 37。
+
+确定性 sample CSV sha256（本次）：`sha256:e85354e49b204f4c45d056a17eb24b9415fdbea2e3ca2a4a762fcf1558e06f22`。
+
+G4 `real_agent`（Day 14，commit `9b592ba`，脏工作区已记录）：模型 `deepseek-v4-pro`，
+profile `openai-compatible`，`max_turns=200`，1 天小区域 ERA5 NetCDF，
+`allow_sample_fallback=false`。三次耗时 114042 / 78628 / 71389 ms。全部
+`requested_mode=cds` / `effective_mode=cds`。修改代码/config/scenario/skill/commit
+后三次计数必须重计。
+
+### 已知限制
+
+- G0～G3 离线 Demo 不要求 CDS 或真实模型。不得把 `synthetic_dry_run` 当成真实执行。
+- G4 CDS 使用冻结 allowlist（`reanalysis-era5-single-levels` 与冻结变量）。默认
+  pytest/CI 禁网（`CLIMATE_INTEGRATION=0`）。
+- 不是通用 DAG 调度器、集群或任意 NetCDF/GRIB 科学计算栈。
+- workspace 外路径禁止。
+- `PRE_TOOL_USE` 可在 `climate_write_report.execute` 前阻断。
+- Windows 全量 `pytest -q` 仍有上游 OpenHarness 环境失败；Climate 回归以 `tests/test_climate` 为准。
+- 2026-09-02 fork GitHub Actions Python 3.10/3.11、Ruff、Frontend typecheck 已绿（`52fa338`，[run 33604624255](https://github.com/Hongjian01/OpenHarness/actions/runs/33604624255)）。未合入上游 HKUDS。
+- 不要提交凭证、`.cdsapirc`、真实 ERA5 下载、`.part`、缓存或 `evals/reports/*.json`。
+
+### 测试命令与常见错误码
+
+```powershell
+uv run pytest tests/test_climate -q
+uv run pytest tests/test_hooks/test_executor.py tests/test_skills/test_loader.py tests/test_skills/test_climate_skill.py -q
+uv run python -m evals --suite climate --mode real_offline
+uv run ruff check src tests scripts evals
+```
+
+| 错误码 | 含义 |
+|--------|------|
+| `CLIMATE_INVALID_PATH` | 路径逃逸或写区违规 |
+| `CLIMATE_INVALID_INPUT` | schema / 字段错误 |
+| `CLIMATE_DEPENDENCY_NOT_READY` | 非法工具顺序 |
+| `CLIMATE_HOOK_BLOCKED` | `PRE_TOOL_USE` 已阻断 execute |
+| `CLIMATE_DEPENDENCY_MISSING` | 可选依赖缺失，或缺少 `--agent-config` 的 `real_agent` |
+| `CLIMATE_IDEMPOTENCY_CONFLICT` | 同 step 不同输入 |
+| `CLIMATE_EXTERNAL_TIMEOUT` | 可重试 CDS 超时（最多 3 次） |
+| `CLIMATE_EXTERNAL_RATE_LIMIT` | 可重试 CDS 429（最多 3 次） |
+
+Agent 指导见 `.openharness/skills/climate-ds/SKILL.md`。
+
+---
+
 ## License
 
 MIT，见 [LICENSE](LICENSE)。
