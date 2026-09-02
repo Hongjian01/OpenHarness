@@ -171,3 +171,20 @@ Day 11 / DEC-G4-001：
 - 决策关闭：是/否
 - Day 12 是否允许开始：
 ```
+
+## Day 11 冻结记录（2026-08-30）
+
+工作区：分支 `feat/climworkflow-mvp`。未读取 `.cdsapirc` / `.env`，未访问真实 CDS，未提交、未推送。
+依赖版本来自 PyPI JSON 与 CDS Catalogue，检索日期 2026-08-30。
+
+```text
+Day 11 / DEC-G4-001：
+- 候选与最终依赖：NetCDF 用 netCDF4>=1.7.4（不采用最新 xarray：requires-python>=3.11；不采用 h5netcdf 作主 reader）。GRIB 用 eccodes>=2.48.0（不钉 cfgrib/xarray）。cdsapi>=0.7.7 仅 extra climate。
+- Windows/Linux/Python 兼容：本机 Windows Python 3.13 安装 netCDF4==1.7.4、eccodes==2.48.0；selfcheck Found: ecCodes v2.48.0。netCDF4 有 cp310-win_amd64 与 manylinux wheel；eccodeslib 2.48.0.26 有 manylinux_2_28 cp310/cp311。CI 3.10/3.11 有明确 wheel 路径。
+- fixture/magic 实验：minimal_t2m.nc 8884B HDF5/NetCDF4 可读 t2m+time/lat/lon；minimal.grib 179B 可读 shortName=t 与经纬角点；截断/随机/错扩展名拒绝。
+- allowlist 来源：CDS collection reanalysis-era5-single-levels form JSON 2026-08-30；DOI 10.24381/cds.adbb2d47；8 个大气单层变量；排除浪场。
+- marker/CI 策略：climate_integration 已注册；默认 CLIMATE_INTEGRATION!=1 则 skip；Actions 设 0；不读凭证文件。
+- SPEC 修订：第 14/18 节关闭 DEC-G4-001；format 保持 netcdf|grib，未降级。
+- 决策关闭：是
+- Day 12 是否允许开始：是（允许写 CDS client；仍禁止在未评审情况下改依赖或省略 GRIB）
+```

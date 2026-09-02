@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 from collections import deque
+
+from datetime import date
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -337,6 +339,77 @@ class RunContext(BaseModel):
                     raise ValueError(f"event.step_id 引用不存在: {event.step_id}")
 
         return self
+
+
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_MAX_CDS_INCLUSIVE_DAYS = 366
+
+
+class CdsRequestInput(BaseModel):
+    """G4 cds_request 严格输入；不含凭证，extra=forbid。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset: str
+    variables: list[str]
+    area: list[float] = Field(min_length=4, max_length=4)
+    date_start: str
+    date_end: str
+    format: Literal["netcdf", "grib"]
+    allow_sample_fallback: bool = False
+
+    @field_validator("date_start", "date_end")
+    @classmethod
+    def _iso_date(cls, value: str) -> str:
+        if not isinstance(value, str) or not _ISO_DATE.fullmatch(value):
+            raise ValueError("必须是 ISO 日期 YYYY-MM-DD")
+        try:
+            date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("必须是合法 ISO 日期") from exc
+        return value
+
+    @field_validator("area")
+    @classmethod
+    def _area_bounds(cls, value: list[float]) -> list[float]:
+        if len(value) != 4:
+            raise ValueError("area 必须是 north/west/south/east 四个数值")
+        north, west, south, east = (float(item) for item in value)
+        if not -90.0 <= north <= 90.0 or not -90.0 <= south <= 90.0:
+            raise ValueError("纬度必须在 [-90, 90]")
+        if not -180.0 <= west <= 180.0 or not -180.0 <= east <= 180.0:
+            raise ValueError("经度必须在 [-180, 180]")
+        if north <= south:
+            raise ValueError("north 必须大于 south")
+        return [north, west, south, east]
+
+    @model_validator(mode="after")
+    def _cross_field(self) -> CdsRequestInput:
+        from openharness.climate.formats import (
+            DATASET_VARIABLES,
+            SUPPORTED_DATASETS,
+            SUPPORTED_FORMATS,
+        )
+
+        if self.dataset not in SUPPORTED_DATASETS:
+            raise ValueError("dataset")
+        if self.format not in SUPPORTED_FORMATS:
+            raise ValueError("format")
+        allowed = DATASET_VARIABLES[self.dataset]
+        if not self.variables:
+            raise ValueError("variables")
+        unknown = [item for item in self.variables if item not in allowed]
+        if unknown:
+            raise ValueError("variables")
+        ordered = [name for name in sorted(allowed) if name in set(self.variables)]
+        start = date.fromisoformat(self.date_start)
+        end = date.fromisoformat(self.date_end)
+        if start > end:
+            raise ValueError("date_order")
+        inclusive_days = (end - start).days + 1
+        if inclusive_days > _MAX_CDS_INCLUSIVE_DAYS:
+            raise ValueError("date_span")
+        return self.model_copy(update={"variables": ordered})
 
 
 def dumps_climate_json(model: BaseModel) -> str:

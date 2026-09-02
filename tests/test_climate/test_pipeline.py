@@ -243,7 +243,7 @@ async def test_illegal_order_and_cds_are_stable_errors(tmp_path: Path) -> None:
         mode="cds",
         cds_request={"dataset": "reanalysis-era5-single-levels"},
     )
-    _assert_failure(cds, "CLIMATE_FORMAT_UNSUPPORTED")
+    _assert_failure(cds, "CLIMATE_INVALID_INPUT")
     assert not (workspace / ".climate" / "data" / RUN_ID / "sample.csv").exists()
 
 
@@ -462,3 +462,230 @@ async def test_query_engine_path_rules_block_climate_tools_from_default_registry
     assert "matches deny rule" in result.content
     assert executed["n"] == 0
     assert not (workspace / ".climate").exists()
+
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+def _cds_request(**overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "dataset": "reanalysis-era5-single-levels",
+        "variables": ["2m_temperature"],
+        "area": [40.0, 116.0, 39.0, 116.25],
+        "date_start": "2025-01-01",
+        "date_end": "2025-01-02",
+        "format": "netcdf",
+    }
+    payload.update(overrides)
+    return payload
+
+
+class _FakeCdsClient:
+    def __init__(
+        self,
+        source: Path | None = None,
+        *,
+        errors: list[BaseException] | None = None,
+    ) -> None:
+        self.source = source
+        self.errors = list(errors or [])
+        self.calls: list[tuple[str, dict[str, Any], str]] = []
+
+    def retrieve(self, dataset: str, request: dict[str, Any], target: str) -> None:
+        self.calls.append((dataset, dict(request), target))
+        if self.errors:
+            raise self.errors.pop(0)
+        path = Path(target)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        assert self.source is not None
+        path.write_bytes(self.source.read_bytes())
+
+
+async def _init_plan(workspace: Path) -> Any:
+    registry = create_climate_tool_registry()
+    init = registry.get("climate_init_workflow")
+    plan = registry.get("climate_plan_steps")
+    assert init and plan
+    await _invoke(init, workspace, objective=OBJECTIVE, run_id=RUN_ID)
+    await _invoke(plan, workspace, steps=STANDARD_STEPS)
+    return registry
+
+
+@pytest.mark.asyncio
+async def test_mock_cds_netcdf_inspect_plot_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mock CDS NetCDF → inspect → plot → report。"""
+    from openharness.climate import cds as cds_mod
+
+    monkeypatch.setattr(
+        cds_mod, "build_cds_client", lambda: _FakeCdsClient(FIXTURES / "minimal_t2m.nc")
+    )
+    workspace = _workspace(tmp_path)
+    registry = await _init_plan(workspace)
+    acquire = registry.get("climate_acquire_data")
+    inspect = registry.get("climate_inspect_dataset")
+    plot = registry.get("climate_analyze_plot")
+    report = registry.get("climate_write_report")
+    assert acquire and inspect and plot and report
+
+    _, acquired = await _invoke(
+        acquire, workspace, step_id="acquire", mode="cds", cds_request=_cds_request()
+    )
+    assert acquired["ok"] is True
+    assert acquired["data"]["media_type"] == "application/x-netcdf"
+
+    _, inspected = await _invoke(inspect, workspace, step_id="inspect")
+    assert inspected["ok"] is True
+    assert inspected["data"]["variables"] == ["t2m"]
+    assert inspected["data"]["format"] == "netcdf"
+
+    _, plotted = await _invoke(
+        plot,
+        workspace,
+        step_id="plot",
+        chart_type="histogram",
+        y="t2m",
+        title="ERA5 t2m",
+    )
+    assert plotted["ok"] is True
+    plot_rel = plotted["data"]["path"]
+    assert (workspace / plot_rel).is_file()
+
+    _, reported = await _invoke(
+        report,
+        workspace,
+        step_id="report",
+        title="ERA5 mock 报告",
+        summary="NetCDF inspect 流水线完成。",
+    )
+    assert reported["ok"] is True
+    text = (workspace / ".climate" / "output" / RUN_ID / "report.md").read_text(encoding="utf-8")
+    assert "t2m" in text
+    assert plot_rel in text
+    assert str(workspace) not in text
+    ctx = loads_run_context(
+        (workspace / ".climate" / "runs" / RUN_ID / "context.json").read_text(encoding="utf-8")
+    )
+    assert ctx.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_mock_cds_timeout_explicit_fallback_then_inspect_plot_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """可重试失败 + 显式 fallback → sample inspect/plot/report。"""
+    from openharness.climate import cds as cds_mod
+
+    monkeypatch.setattr(cds_mod.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        cds_mod,
+        "build_cds_client",
+        lambda: _FakeCdsClient(
+            errors=[cds_mod.CdsTimeout(), cds_mod.CdsTimeout(), cds_mod.CdsTimeout()]
+        ),
+    )
+    workspace = _workspace(tmp_path)
+    registry = await _init_plan(workspace)
+    acquire = registry.get("climate_acquire_data")
+    inspect = registry.get("climate_inspect_dataset")
+    plot = registry.get("climate_analyze_plot")
+    report = registry.get("climate_write_report")
+    assert acquire and inspect and plot and report
+
+    _, acquired = await _invoke(
+        acquire,
+        workspace,
+        step_id="acquire",
+        mode="cds",
+        cds_request=_cds_request(allow_sample_fallback=True),
+    )
+    assert acquired["ok"] is True
+    assert acquired["data"]["requested_mode"] == "cds"
+    assert acquired["data"]["effective_mode"] == "sample"
+    assert acquired["data"]["fallback_reason"] == "CLIMATE_EXTERNAL_TIMEOUT"
+
+    _, inspected = await _invoke(inspect, workspace, step_id="inspect")
+    assert inspected["ok"] is True
+    assert inspected["data"]["row_count"] == 30
+
+    _, plotted = await _invoke(
+        plot,
+        workspace,
+        step_id="plot",
+        chart_type="line",
+        x="date",
+        y="temperature_c",
+        title="sample fallback",
+    )
+    assert plotted["ok"] is True
+    _, reported = await _invoke(
+        report,
+        workspace,
+        step_id="report",
+        title="fallback 报告",
+        summary="显式 sample fallback 流水线完成。",
+    )
+    assert reported["ok"] is True
+    text = (workspace / ".climate" / "output" / RUN_ID / "report.md").read_text(encoding="utf-8")
+    assert "sample" in text
+    ctx = loads_run_context(
+        (workspace / ".climate" / "runs" / RUN_ID / "context.json").read_text(encoding="utf-8")
+    )
+    assert ctx.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_mock_cds_fail_without_fallback_has_no_sample(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openharness.climate import cds as cds_mod
+
+    monkeypatch.setattr(cds_mod.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        cds_mod,
+        "build_cds_client",
+        lambda: _FakeCdsClient(
+            errors=[cds_mod.CdsTimeout(), cds_mod.CdsTimeout(), cds_mod.CdsTimeout()]
+        ),
+    )
+    workspace = _workspace(tmp_path)
+    registry = await _init_plan(workspace)
+    acquire = registry.get("climate_acquire_data")
+    assert acquire
+    _, payload = await _invoke(
+        acquire, workspace, step_id="acquire", mode="cds", cds_request=_cds_request()
+    )
+    _assert_failure(payload, "CLIMATE_EXTERNAL_TIMEOUT")
+    data_dir = workspace / ".climate" / "data" / RUN_ID
+    assert not (data_dir / "sample.csv").exists()
+    ctx = loads_run_context(
+        (workspace / ".climate" / "runs" / RUN_ID / "context.json").read_text(encoding="utf-8")
+    )
+    step = next(item for item in ctx.steps if item.step_id == "acquire")
+    assert step.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_format_masquerade_rejects_without_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openharness.climate import cds as cds_mod
+
+    monkeypatch.setattr(
+        cds_mod, "build_cds_client", lambda: _FakeCdsClient(FIXTURES / "grib_magic.nc")
+    )
+    workspace = _workspace(tmp_path)
+    registry = await _init_plan(workspace)
+    acquire = registry.get("climate_acquire_data")
+    inspect = registry.get("climate_inspect_dataset")
+    assert acquire and inspect
+    _, payload = await _invoke(
+        acquire, workspace, step_id="acquire", mode="cds", cds_request=_cds_request()
+    )
+    _assert_failure(payload, "CLIMATE_DATA_INVALID")
+    data_dir = workspace / ".climate" / "data" / RUN_ID
+    assert not data_dir.exists() or list(data_dir.rglob("*")) == []
+    _, inspected = await _invoke(inspect, workspace, step_id="inspect")
+    _assert_failure(inspected, "CLIMATE_DEPENDENCY_NOT_READY")
+    assert not (workspace / ".climate" / "output" / RUN_ID / "profile.json").exists()

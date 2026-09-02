@@ -44,9 +44,16 @@ dev = [
     "ruff>=0.5.0",
     "mypy>=1.10.0",
     "matplotlib>=3.7.0",
+    "netCDF4>=1.7.4",
+    "eccodes>=2.48.0",
 ]
 plot = [
     "matplotlib>=3.7.0",
+]
+climate = [
+    "netCDF4>=1.7.4",
+    "eccodes>=2.48.0",
+    "cdsapi>=0.7.7",
 ]
 
 [project.scripts]
@@ -80,6 +87,9 @@ exclude = [
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["."]
+markers = [
+    "climate_integration: 真实 CDS/网络集成测试；默认跳过。需 CLIMATE_INTEGRATION=1 且凭证可用；不得把凭证或路径写入日志。",
+]
 
 [tool.ruff]
 line-length = 100
@@ -92,3 +102,13 @@ select = ["E4", "E7", "E9", "F"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+# netCDF4 1.7.4 在 win32+ARM64 上声明 numpy>=2.3，而 numpy 2.3+ 需要 Python 3.11+，
+# 与仓库 requires-python>=3.10 的通用解析冲突。CI 为 Ubuntu x86_64；本机开发为
+# Windows AMD64。不承诺 Windows ARM64。
+[tool.uv]
+environments = [
+    "sys_platform == 'linux'",
+    "sys_platform == 'darwin'",
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+]

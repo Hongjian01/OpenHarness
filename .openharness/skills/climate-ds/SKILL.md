@@ -2,7 +2,7 @@
 name: climate-ds
 description: >
   ClimWorkflow climate-data workflow guidance: 7-tool order, disk Context
-  recovery, credential safety, and G0-G3 offline limits without CDS.
+  recovery, credential safety, offline sample/local, and G4 CDS acquire.
 ---
 
 # climate-ds
@@ -16,9 +16,9 @@ description: >
 
 1. `climate_init_workflow` — 创建或显式 resume run，并切换 active run。
 2. `climate_plan_steps` — 校验并持久化 DAG。
-3. `climate_acquire_data` — G0～G3 仅使用 sample 或 local CSV。
+3. `climate_acquire_data` — 离线用 sample/local；G4 真实场景用 `mode=cds` 且 `allow_sample_fallback=false`。
 4. `climate_inspect_dataset` — 有界检查，不修改源数据集。
-5. `climate_analyze_plot` — 先 PNG，必要时真实 SVG。
+5. `climate_analyze_plot` — 先 PNG，必要时真实 SVG。科学 NetCDF 用 histogram，y=t2m。
 6. `climate_write_report` — inspect 与 plot 成功后再写报告。
 7. `climate_read_context` — 只读、脱敏、有界的权威 Context 视图。
 
@@ -31,9 +31,10 @@ description: >
 ## 凭证安全
 
 禁止把 CDS 凭证、API key、token 或 `.cdsapirc` 写入工具输入、日志或 Context。
-错误信息必须脱敏。
+错误信息必须脱敏。不要读取 `~/.cdsapirc` 或 `~/.openharness/credentials.json`。
 
-## G0～G3 范围
+## 范围
 
-G0～G3 不调用 CDS，不要求真实模型。只使用离线 sample/local。workspace 外路径禁止。
-本 Skill 不是通用 DAG 调度器。
+G0～G3 不调用 CDS，不要求真实模型，只使用离线 sample/local。
+G4 真实 Agent baseline 必须走 CDS，禁止静默 fallback 到 sample。
+workspace 外路径禁止。本 Skill 不是通用 DAG 调度器。

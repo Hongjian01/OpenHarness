@@ -852,8 +852,12 @@ For older versions that do not include this fix, use a terminal that sends a sta
 ## ClimWorkflow Offline Engineering MVP
 
 ClimWorkflow is a recoverable climate-data workflow on OpenHarness. Day 10
-(2026-08-28) accepted G0–G3 as **ClimWorkflow Offline Engineering MVP**.
-This section is the offline demo: real Climate tools, no CDS, no live model.
+(2026-08-28) accepted G0–G3 as **ClimWorkflow Offline Engineering MVP**. Day 15
+(2026-09-01) locally accepted G4 (real CDS smoke + fixed-config `real_agent`
+3/3). GitHub Actions has not been pushed, so remote CI evidence is still a GAP.
+
+This section first documents the **offline demo**: real Climate tools, no CDS,
+no live model, no API key. G4 commands are separate and optional.
 
 Architecture:
 
@@ -863,8 +867,9 @@ Agent loop (QueryEngine, unchanged)
       → pipeline + versioned state machine
           → ContextRepository (atomic write, dual file lock, WAL)
               → .climate/  (index, runs, data, output, locks, tx, backups)
-  → Eval: real_offline | synthetic_dry_run
+  → Eval: real_offline | synthetic_dry_run | real_agent
   → PRE_TOOL_USE Hook guard (before execute)
+  → G4 optional: cdsapi (external credentials) + NetCDF/GRIB readers
 Memory / compact are navigation only; disk Context is authoritative.
 ```
 
@@ -875,7 +880,8 @@ uv sync --extra dev
 uv run pytest tests/test_climate -q
 ```
 
-No API key is required.
+No API key is required for the offline demo. Keep `CLIMATE_INTEGRATION=0` unless
+you intentionally run the marked CDS test.
 
 ### Empty-workspace sample demo
 
@@ -971,7 +977,7 @@ asyncio.run(main())
 Do not guess success from a compact summary. `climate_read_context` is the
 authoritative recovery source.
 
-### `real_offline` vs `synthetic_dry_run`
+### `real_offline` vs `synthetic_dry_run` vs `real_agent`
 
 ```powershell
 uv run python -m evals --suite climate --mode real_offline
@@ -982,45 +988,68 @@ uv run python -m evals --suite climate --mode synthetic_dry_run
 |------|----------------|------------------------------|
 | `real_offline` | Real Climate tools, no network, no model | Yes |
 | `synthetic_dry_run` | Scenario parse / assertion wiring / report format only | No |
-| `real_agent` | Schema-recognized; G3 refuses with `CLIMATE_DEPENDENCY_MISSING` | No |
+| `real_agent` | Fixed model + real Climate tools + CDS; needs `--agent-config` | Yes, only after 3 runs / ≥2 hard-assertion passes |
 
-### Day 10 measured results (2026-08-28, local Windows)
+G3 still refuses `real_agent` without `--agent-config` (`CLIMATE_DEPENDENCY_MISSING`).
+G4 entry (credentials stay outside the repo):
 
-Numbers below are from this acceptance run, not estimates.
+```powershell
+uv run python -m evals --suite climate --mode real_agent `
+  --agent-config evals/configs/climate-real.json `
+  --runs 3 `
+  --baseline-out evals/baselines/climate-real-<commit>.json
+```
+
+### Day 15 measured results (2026-09-01, local Windows)
+
+Numbers below are from this acceptance run, not estimates. Day 10 (2026-08-28)
+G3 numbers remain historical: Climate 198 passed; `real_offline` 4/4 in 10850 ms.
 
 | Command | Result | Source |
 |---------|--------|--------|
-| `uv run pytest tests/test_climate -q` | **198 passed in 52.29s** | Climate suite |
-| Climate collect-only | 198 tests | `pytest tests/test_climate --collect-only -q` |
+| `uv run pytest tests/test_climate --collect-only -q` | **258 tests** | Climate collect |
+| `uv run pytest tests/test_climate -q` (`CLIMATE_INTEGRATION=0`) | **257 passed, 1 skipped in 124.29s** | Climate suite |
+| `uv run pytest -m climate_integration tests/test_climate/test_cds.py -q` | **1 passed in 47.18s** | marked CDS smoke |
 | `climate-ds` Skill tests | 2 passed (in full pytest) | `tests/test_skills/test_climate_skill.py` |
-| `uv run pytest -q` | 1325 passed, **23 failed**, 11 skipped in 137.30s | Failures are OpenHarness POSIX/tz/symlink/cmd on Windows; **0 Climate failures** |
+| `uv run pytest -q` (`CLIMATE_INTEGRATION=0`) | 1388 passed, **23 failed**, 12 skipped in 215.36s | Failures are OpenHarness POSIX/tz/symlink/cmd on Windows; **0 Climate failures** |
 | `uv run ruff check src tests scripts evals` | All checks passed | Ruff |
-| `uv run python -m evals --suite climate --mode real_offline` | 4/4 scenarios, `real_pass_rate=1.0`, wall **10850 ms** | CLI |
-| `uv run python -m evals --suite climate --mode synthetic_dry_run` | labeled SYNTHETIC DRY-RUN; `counts_toward_real_pass_rate=false`; wall **2644 ms** | CLI |
+| `uv run python -m evals --suite climate --mode real_offline` | 4/4 scenarios, `real_pass_rate=1.0`, wall **47102 ms** | CLI |
+| `uv run python -m evals --suite climate --mode synthetic_dry_run` | labeled SYNTHETIC DRY-RUN; `counts_toward_real_pass_rate=false` | CLI |
+| `evals/baselines/climate-real-9b592ba.json` | **passes=3/3**, `min_passes=2`, three isolated workspaces | Day 14 fixed-config baseline |
 
 `real_offline` scenario traces (this run):
 
 | Scenario | duration_ms | final status | notes |
 |----------|------------:|--------------|-------|
-| `sample_pipeline` | 1211 | `completed` | 7-tool sequence; 4 artifacts (dataset/profile/plot/report) |
-| `cached_inspect` | 371 | `running` | local CSV copy + inspect replay; source unmodified |
-| `multiturn_recovery` | 651 | `completed` | session destroyed; resume from disk Context only |
-| `pre_tool_output_guard` | 5362 | `running` | `PRE_TOOL_USE` blocked `climate_write_report`; execute=0; `CLIMATE_HOOK_BLOCKED` |
+| `sample_pipeline` | 777 | `completed` | 7-tool sequence; 4 artifacts (dataset/profile/plot/report) |
+| `cached_inspect` | 215 | `running` | local CSV copy + inspect replay; source unmodified |
+| `multiturn_recovery` | 476 | `completed` | session destroyed; resume from disk Context only |
+| `pre_tool_output_guard` | 4641 | `running` | `PRE_TOOL_USE` blocked `climate_write_report`; execute=0; `CLIMATE_HOOK_BLOCKED` |
 
-Sample pipeline tool timings (ms): init 46, plan 92, acquire 113, inspect 87, plot 703, report 127, read 31.
+Sample pipeline tool timings (ms): init 18, plan 48, acquire 54, inspect 56, plot 472, report 84, read 37.
 
 Deterministic sample CSV sha256 (this run): `sha256:e85354e49b204f4c45d056a17eb24b9415fdbea2e3ca2a4a762fcf1558e06f22`.
 
-G4 (`real_agent`, CDS/ERA5) is **not** implemented and is not counted.
+G4 `real_agent` (Day 14, commit `9b592ba`, dirty working tree recorded): model
+`deepseek-v4-pro`, profile `openai-compatible`, `max_turns=200`, 1-day small-area
+ERA5 NetCDF, `allow_sample_fallback=false`. Durations 114042 / 78628 / 71389 ms.
+All three runs `requested_mode=cds` / `effective_mode=cds`. Changing
+code/config/scenario/skill/commit restarts the 3-run count.
 
 ### Known limits
 
-- No real CDS / ERA5 download in G0–G3. Do not claim “supports real ERA5/CDS”.
-- Not a general DAG scheduler.
+- Offline demo (G0–G3) does not require CDS or a live model. Do not treat
+  `synthetic_dry_run` as real execution.
+- G4 CDS is allowlisted (`reanalysis-era5-single-levels` + frozen variables).
+  Default pytest/CI stay offline (`CLIMATE_INTEGRATION=0`).
+- Not a general DAG scheduler, cluster, or arbitrary NetCDF/GRIB science stack.
 - Paths outside the workspace are rejected.
-- No live model in this demo.
 - `PRE_TOOL_USE` can block `climate_write_report` before `execute`.
-- Windows full `pytest -q` still has upstream OpenHarness environment failures; Climate regression is `tests/test_climate`.
+- Windows full `pytest -q` still has upstream OpenHarness environment failures;
+  Climate regression is `tests/test_climate`.
+- GitHub Actions Python 3.10/3.11 has not been pushed from this branch.
+- Do not commit credentials, `.cdsapirc`, downloaded ERA5, `.part`, caches, or
+  `evals/reports/*.json`.
 
 ### Tests and common error codes
 
@@ -1037,8 +1066,10 @@ uv run ruff check src tests scripts evals
 | `CLIMATE_INVALID_INPUT` | Schema / field error |
 | `CLIMATE_DEPENDENCY_NOT_READY` | Illegal tool order |
 | `CLIMATE_HOOK_BLOCKED` | `PRE_TOOL_USE` blocked execute |
-| `CLIMATE_DEPENDENCY_MISSING` | Optional dependency missing, or G3 `real_agent` |
+| `CLIMATE_DEPENDENCY_MISSING` | Optional dependency missing, or `real_agent` without `--agent-config` |
 | `CLIMATE_IDEMPOTENCY_CONFLICT` | Same step, different input |
+| `CLIMATE_EXTERNAL_TIMEOUT` | Retryable CDS timeout (max 3) |
+| `CLIMATE_EXTERNAL_RATE_LIMIT` | Retryable CDS 429 (max 3) |
 
 Agent guidance lives in `.openharness/skills/climate-ds/SKILL.md`.
 

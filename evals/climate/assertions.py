@@ -95,6 +95,36 @@ def _evaluate_one(trace: TraceRecord, spec: HardAssertionSpec) -> AssertionResul
             and trace.counts_toward_real_pass_rate is True
         )
         return _ok(spec, passed, "ok" if passed else "未证明真实工具执行或误标 synthetic")
+    if spec.type == "model_and_tools_real":
+        passed = (
+            trace.synthetic is False
+            and trace.tools_executed is True
+            and trace.model_invoked is True
+            and trace.counts_toward_real_pass_rate is True
+            and trace.mode.value == "real_agent"
+        )
+        return _ok(spec, passed, "ok" if passed else "未证明真实模型与工具执行")
+    if spec.type == "climate_dag_order":
+        return _climate_dag_order(trace, spec)
+    if spec.type == "cds_mode_no_fallback":
+        return _cds_mode_no_fallback(trace, spec)
+    if spec.type == "duration_within_timeout":
+        limit = spec.expected
+        if not isinstance(limit, int):
+            return _fail(spec, "duration_within_timeout 的 expected 必须是秒")
+        passed = 0 <= trace.duration_ms <= limit * 1000
+        return _ok(
+            spec,
+            passed,
+            "ok" if passed else f"耗时超出 timeout: {trace.duration_ms}ms > {limit}s",
+        )
+    if spec.type == "unknown_tools_forbidden":
+        allowed = spec.expected
+        if not isinstance(allowed, list):
+            return _fail(spec, "unknown_tools_forbidden 的 expected 必须是工具名列表")
+        unknown = [item.name for item in trace.tool_calls if item.name not in allowed]
+        passed = not unknown
+        return _ok(spec, passed, "ok" if passed else f"未知工具: {unknown}")
     if spec.type == "hook_event":
         return _hook_event(trace, spec)
     if spec.type == "hook_provenance":
@@ -102,6 +132,47 @@ def _evaluate_one(trace: TraceRecord, spec: HardAssertionSpec) -> AssertionResul
     if spec.type == "blocked_side_effect_free":
         return _blocked_side_effect_free(trace, spec)
     return _fail(spec, f"未知 hard assertion 类型: {spec.type}")
+
+
+def _climate_dag_order(trace: TraceRecord, spec: HardAssertionSpec) -> AssertionResult:
+    expected = spec.expected
+    if not isinstance(expected, list) or not expected:
+        return _fail(spec, "climate_dag_order 的 expected 必须是非空工具列表")
+    names = [item.name for item in trace.tool_calls]
+    last_index = -1
+    missing: list[str] = []
+    for name in expected:
+        try:
+            index = names.index(name)
+        except ValueError:
+            missing.append(name)
+            continue
+        if index < last_index:
+            return _ok(spec, False, f"工具顺序违反依赖: {name} 出现过早")
+        last_index = index
+    if missing:
+        return _ok(spec, False, f"缺少工具: {missing}")
+    return _ok(spec, True, "ok")
+
+
+def _cds_mode_no_fallback(trace: TraceRecord, spec: HardAssertionSpec) -> AssertionResult:
+    acquire = [item for item in trace.tool_calls if item.name == "climate_acquire_data"]
+    if not acquire:
+        return _fail(spec, "未找到 climate_acquire_data")
+    data = acquire[-1].output_redacted or {}
+    requested = data.get("requested_mode")
+    effective = data.get("effective_mode")
+    passed = (
+        acquire[-1].is_error is False
+        and requested == "cds"
+        and effective == "cds"
+        and not data.get("fallback_reason")
+    )
+    return _ok(
+        spec,
+        passed,
+        "ok" if passed else f"CDS 模式不成立: requested={requested} effective={effective}",
+    )
 
 
 def _hook_event(trace: TraceRecord, spec: HardAssertionSpec) -> AssertionResult:

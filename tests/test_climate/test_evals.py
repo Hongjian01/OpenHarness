@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from evals.climate.agent_config import config_fingerprint, load_agent_config
 from evals.climate.assertions import evaluate_hard_assertions
 from evals.climate.models import (
     EvalMode,
@@ -344,6 +345,9 @@ def test_cli_accepts_suite_and_mode_flags() -> None:
     assert "real_offline" in text
     assert "synthetic_dry_run" in text
     assert "real_agent" in text
+    assert "--agent-config" in text
+    assert "--runs" in text
+    assert "--baseline-out" in text
 
 
 def test_real_agent_is_schema_recognized_but_g3_refuses_execution() -> None:
@@ -360,6 +364,34 @@ def test_real_agent_is_schema_recognized_but_g3_refuses_execution() -> None:
     lowered = combined.lower()
     assert "synthetic" not in lowered or "not executed" in lowered
     assert "pass_rate" not in lowered or "not counted" in lowered or "不计入" in combined
+
+
+def test_climate_real_config_is_non_sensitive() -> None:
+    """agent-config 只冻结非敏感 provider/model 引用，不得含凭证字段。"""
+    path = ROOT / "evals" / "configs" / "climate-real.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    text = json.dumps(data, ensure_ascii=False)
+    forbidden = (
+        "api_key",
+        "token",
+        "password",
+        "secret",
+        "authorization",
+        "cdsapirc",
+        "CDSAPI_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+    )
+    lowered = text.lower()
+    for field in forbidden:
+        assert field.lower() not in lowered
+    assert "sk-" not in lowered
+    assert data["profile"] == "openai-compatible"
+    assert data["model"] == "deepseek-v4-pro"
+    assert data["max_turns"] == 200
+    assert data["allow_sample_fallback"] is False
+    assert data["cds_request"]["allow_sample_fallback"] is False
+    assert data["cds_request"]["date_start"] == data["cds_request"]["date_end"]
 
 
 def test_missing_suite_or_scenario_returns_stable_diagnostic() -> None:
@@ -804,3 +836,242 @@ def test_real_offline_forbids_network() -> None:
             socket.create_connection(("203.0.113.1", 80), timeout=0.2)
         with pytest.raises(OSError):
             socket.socket().connect(("203.0.113.1", 80))
+
+
+def _passing_real_agent_trace() -> TraceRecord:
+    names = [
+        "climate_init_workflow",
+        "climate_plan_steps",
+        "climate_acquire_data",
+        "climate_inspect_dataset",
+        "climate_analyze_plot",
+        "climate_write_report",
+        "climate_read_context",
+    ]
+    calls = []
+    for index, name in enumerate(names, start=1):
+        output: dict[str, Any] = {"version": index}
+        if name == "climate_acquire_data":
+            output.update({"requested_mode": "cds", "effective_mode": "cds"})
+        if name == "climate_write_report":
+            output.update({"has_relative_plot": True, "has_absolute_workspace": False})
+        calls.append(
+            {
+                "sequence": index,
+                "name": name,
+                "input_redacted": {"note": "omitted"},
+                "is_error": False,
+                "error_code": None,
+                "duration_ms": 1,
+                "context_version": index,
+                "output_redacted": output,
+            }
+        )
+    return TraceRecord.model_validate(
+        {
+            "suite_version": "g4-real-agent",
+            "scenario_id": "cds_minimal_smoke",
+            "run_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "mode": "real_agent",
+            "started_at": "2026-09-01T00:00:00Z",
+            "finished_at": "2026-09-01T00:01:00Z",
+            "duration_ms": 1000,
+            "tool_calls": calls,
+            "hook_events": [],
+            "final_run_status": "completed",
+            "final_context_version": 7,
+            "artifact_manifest": [
+                {"kind": "dataset", "path": ".climate/data/run/era5.nc", "matches_context": True},
+                {"kind": "plot", "path": ".climate/output/run/plot.png", "matches_context": True},
+                {"kind": "report", "path": ".climate/output/run/report.md", "matches_context": True},
+            ],
+            "assertion_results": [],
+            "synthetic": False,
+            "tools_executed": True,
+            "model_invoked": True,
+            "counts_toward_real_pass_rate": True,
+            "network_isolated": False,
+            "context_versions": [1, 2, 3, 4, 5, 6, 7],
+        }
+    )
+
+
+def test_real_agent_stamps_per_tool_duration_from_start_complete() -> None:
+    """Started/Completed 之间的墙钟写回 duration_ms；未完成的工具在收尾时补上。"""
+    from evals.climate.real_agent import _elapsed_ms, _stamp_tool_duration
+
+    assert _elapsed_ms(100.0, 100.2504) == 250
+    assert _elapsed_ms(100.0, 99.9) == 0
+
+    calls: list[dict[str, object]] = [
+        {"sequence": 1, "name": "climate_init_workflow", "duration_ms": 0},
+        {"sequence": 2, "name": "climate_acquire_data", "duration_ms": 0},
+    ]
+    started = {1: 10.0, 2: 10.5}
+    _stamp_tool_duration(calls, started, sequence=1, ended=12.0)
+    assert calls[0]["duration_ms"] == 2000
+    assert 1 not in started
+    assert 2 in started
+
+    _stamp_tool_duration(calls, started, ended=70.5)
+    assert calls[1]["duration_ms"] == 60000
+    assert started == {}
+
+
+def test_real_agent_runs_must_be_three() -> None:
+    completed = _cli(
+        "--suite",
+        "climate",
+        "--mode",
+        "real_agent",
+        "--agent-config",
+        str(ROOT / "evals" / "configs" / "climate-real.json"),
+        "--runs",
+        "2",
+        "--baseline-out",
+        "evals/baselines/tmp.json",
+    )
+    assert completed.returncode != 0
+    text = completed.stdout + completed.stderr
+    assert "CLIMATE_INVALID_INPUT" in text
+    assert "--runs" in text
+
+
+def test_config_fingerprint_changes_with_scenario_or_commit() -> None:
+    config = load_agent_config(ROOT / "evals" / "configs" / "climate-real.json")
+    first = config_fingerprint(config, scenario_text="a", skill_text="s", git_commit="abc")
+    second = config_fingerprint(config, scenario_text="b", skill_text="s", git_commit="abc")
+    third = config_fingerprint(config, scenario_text="a", skill_text="s", git_commit="def")
+    dirty_a = config_fingerprint(config, scenario_text="a", skill_text="s", git_commit="abc:aaa")
+    dirty_b = config_fingerprint(config, scenario_text="a", skill_text="s", git_commit="abc:bbb")
+    assert first != second
+    assert first != third
+    assert dirty_a != dirty_b
+    assert dirty_a != first
+
+
+def test_agent_config_rejects_secret_fields(tmp_path: Path) -> None:
+    path = tmp_path / "bad.json"
+    path.write_text('{"api_key": "x", "model": "m"}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="敏感"):
+        load_agent_config(path)
+
+
+def test_real_agent_two_pass_publishes_and_keeps_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from evals.climate import runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "REPORT_DIR", tmp_path / "reports")
+    passing = _passing_real_agent_trace()
+    failing = passing.model_copy(update={"final_run_status": "failed", "tool_calls": passing.tool_calls[:2]})
+    states = iter([passing, passing, failing])
+
+    def _fake(scenario: Any, config: Any, *, workspace: Path, run_index: int) -> TraceRecord:
+        del scenario, config, workspace, run_index
+        return next(states)
+
+    out = tmp_path / "baseline.json"
+    code = runner_mod.run_suite(
+        "climate",
+        "real_agent",
+        agent_config=str(ROOT / "evals" / "configs" / "climate-real.json"),
+        runs=3,
+        baseline_out=str(out),
+        run_once=_fake,
+    )
+    assert code == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["passes"] == 2
+    assert payload["baseline_published"] is True
+    assert len(payload["results"]) == 3
+    assert payload["results"][2]["passed"] is False
+    dumped = json.dumps(payload)
+    assert "api_key" not in dumped.lower()
+    assert ".cdsapirc" not in dumped.lower()
+
+
+def test_real_agent_one_pass_does_not_publish_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from evals.climate import runner as runner_mod
+
+    reports = tmp_path / "reports"
+    monkeypatch.setattr(runner_mod, "REPORT_DIR", reports)
+    passing = _passing_real_agent_trace()
+    failing = passing.model_copy(update={"final_run_status": "failed", "tool_calls": passing.tool_calls[:1]})
+    states = iter([passing, failing, failing])
+
+    def _fake(scenario: Any, config: Any, *, workspace: Path, run_index: int) -> TraceRecord:
+        del scenario, config, workspace, run_index
+        return next(states)
+
+    out = tmp_path / "baseline.json"
+    code = runner_mod.run_suite(
+        "climate",
+        "real_agent",
+        agent_config=str(ROOT / "evals" / "configs" / "climate-real.json"),
+        runs=3,
+        baseline_out=str(out),
+        run_once=_fake,
+    )
+    assert code != 0
+    assert not out.exists()
+    unpublished = reports / "climate-real_agent-unpublished.json"
+    assert unpublished.is_file()
+    payload = json.loads(unpublished.read_text(encoding="utf-8"))
+    assert payload["passes"] == 1
+    assert payload["baseline_published"] is False
+    assert len(payload["results"]) == 3
+    assert payload["results"][1]["passed"] is False
+    assert payload["results"][2]["passed"] is False
+    dumped = json.dumps(payload)
+    assert "api_key" not in dumped.lower()
+    assert "sk-" not in dumped.lower()
+    assert str(Path.home()) not in dumped
+    assert str(Path.home()).replace("\\", "/") not in dumped
+
+
+def test_real_agent_isolated_workspaces_and_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """三次独立 workspace；commit/scenario 变化会改变 fingerprint，计数必须重计。"""
+    from evals.climate import runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "REPORT_DIR", tmp_path / "reports")
+    seen: list[tuple[int, str]] = []
+
+    def _fake(scenario: Any, config: Any, *, workspace: Path, run_index: int) -> TraceRecord:
+        del scenario, config
+        seen.append((run_index, str(workspace.resolve())))
+        return _passing_real_agent_trace()
+
+    out = tmp_path / "baseline.json"
+    code = runner_mod.run_suite(
+        "climate",
+        "real_agent",
+        agent_config=str(ROOT / "evals" / "configs" / "climate-real.json"),
+        runs=3,
+        baseline_out=str(out),
+        run_once=_fake,
+    )
+    assert code == 0
+    assert [index for index, _ in seen] == [1, 2, 3]
+    paths = {path for _, path in seen}
+    assert len(paths) == 3
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["fingerprint"]
+    assert payload["runs"] == 3
+    assert payload["min_passes"] == 2
+    assert payload["dirty"] is True or payload["dirty"] is False
+    if payload["dirty"]:
+        assert payload["dirty_digest"]
+    assert all(item["workspace_isolated"] is True for item in payload["results"])
+    config = load_agent_config(ROOT / "evals" / "configs" / "climate-real.json")
+    changed = config_fingerprint(
+        config,
+        scenario_text="changed-scenario",
+        skill_text="s",
+        git_commit=str(payload["git_commit"]),
+    )
+    assert changed != payload["fingerprint"]

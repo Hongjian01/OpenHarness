@@ -500,7 +500,7 @@ async def test_acquire_mode_fields_and_no_implicit_fallback(tmp_path: Path) -> N
         mode="cds",
         cds_request={"dataset": "reanalysis-era5-single-levels"},
     )
-    _assert_failure_envelope(cds, "CLIMATE_FORMAT_UNSUPPORTED")
+    _assert_failure_envelope(cds, "CLIMATE_INVALID_INPUT")
     data_dir = workspace / ".climate" / "data" / RUN_ID
     assert not data_dir.exists() or list(data_dir.rglob("*")) == []
 
@@ -1274,3 +1274,182 @@ async def test_report_dependencies_artifact_and_completion(tmp_path: Path) -> No
     assert str(local_ws) not in local_text
     local_ctx = loads_run_context(_context_path(local_ws).read_text(encoding="utf-8"))
     assert local_ctx.status == "completed"
+
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+class _FakeCdsClient:
+    """工具层 inspect/fallback 测试用假客户端。"""
+
+    def __init__(self, source: Path | None = None, *, errors: list[BaseException] | None = None) -> None:
+        self.source = source
+        self.errors = list(errors or [])
+        self.calls: list[tuple[str, dict[str, Any], str]] = []
+
+    def retrieve(self, dataset: str, request: dict[str, Any], target: str) -> None:
+        self.calls.append((dataset, dict(request), target))
+        if self.errors:
+            raise self.errors.pop(0)
+        path = Path(target)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        assert self.source is not None
+        path.write_bytes(self.source.read_bytes())
+
+
+def _cds_request(**overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "dataset": "reanalysis-era5-single-levels",
+        "variables": ["2m_temperature"],
+        "area": [40.0, 116.0, 39.0, 116.25],
+        "date_start": "2025-01-01",
+        "date_end": "2025-01-02",
+        "format": "netcdf",
+    }
+    payload.update(overrides)
+    return payload
+
+
+async def _acquire_cds_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: Path,
+    *,
+    fmt: str = "netcdf",
+) -> tuple[Path, Any]:
+    from openharness.climate import cds as cds_mod
+
+    client = _FakeCdsClient(source)
+    monkeypatch.setattr(cds_mod, "build_cds_client", lambda: client)
+    workspace = _workspace(tmp_path)
+    registry = create_climate_tool_registry()
+    init = registry.get("climate_init_workflow")
+    plan = registry.get("climate_plan_steps")
+    acquire = registry.get("climate_acquire_data")
+    assert init and plan and acquire
+    await _invoke(init, workspace, objective=OBJECTIVE, run_id=RUN_ID)
+    await _invoke(plan, workspace, steps=STANDARD_STEPS)
+    _, payload = await _invoke(
+        acquire,
+        workspace,
+        step_id="acquire",
+        mode="cds",
+        cds_request=_cds_request(format=fmt),
+    )
+    _assert_success_envelope(payload)
+    return workspace, registry
+
+
+@pytest.mark.asyncio
+async def test_inspect_scientific_fixture_is_bounded_and_does_not_touch_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TOOL-INSPECT-001 G4：NetCDF/GRIB inspect 不改源文件，profile 有界且无库对象。"""
+    cases = (
+        (FIXTURES / "minimal_t2m.nc", "netcdf", "t2m"),
+        (FIXTURES / "minimal.grib", "grib", "t"),
+    )
+    inspect = None
+    for source, fmt, variable in cases:
+        workspace, registry = await _acquire_cds_fixture(
+            tmp_path / fmt, monkeypatch, source, fmt=fmt
+        )
+        inspect = registry.get("climate_inspect_dataset")
+        assert inspect is not None
+        published = next(
+            path
+            for path in (workspace / ".climate" / "data" / RUN_ID).rglob("*")
+            if path.is_file() and path.suffix.lower() in {".nc", ".grib"}
+        )
+        before = published.read_bytes()
+        digest = hashlib.sha256(before).hexdigest()
+        mtime = published.stat().st_mtime_ns
+
+        _, payload = await _invoke(inspect, workspace, step_id="inspect")
+        _assert_success_envelope(payload)
+        profile = payload["data"]
+        assert profile["format"] == fmt
+        assert variable in profile["variables"]
+        assert variable in profile["statistics"]
+        assert {"min", "max", "mean", "count"} <= set(profile["statistics"][variable])
+        encoded = json.dumps(profile)
+        assert len(encoded.encode("utf-8")) < 16_384
+        assert "rows" not in profile
+        assert "netCDF4.Dataset" not in encoded
+        assert published.read_bytes() == before
+        assert hashlib.sha256(published.read_bytes()).hexdigest() == digest
+        assert published.stat().st_mtime_ns == mtime
+
+        ctx = loads_run_context(_context_path(workspace).read_text(encoding="utf-8"))
+        step = next(item for item in ctx.steps if item.step_id == "inspect")
+        assert step.status == "succeeded"
+        dumped = json.dumps(ctx.model_dump(mode="json"))
+        assert "Dataset object" not in dumped
+        assert "eccodes" not in dumped.lower() or "format" in dumped
+
+
+@pytest.mark.asyncio
+async def test_inspect_rejects_truncated_and_masquerade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openharness.climate import cds as cds_mod
+
+    workspace = _workspace(tmp_path)
+    registry = create_climate_tool_registry()
+    init = registry.get("climate_init_workflow")
+    plan = registry.get("climate_plan_steps")
+    acquire = registry.get("climate_acquire_data")
+    inspect = registry.get("climate_inspect_dataset")
+    assert init and plan and acquire and inspect
+    await _invoke(init, workspace, objective=OBJECTIVE, run_id=RUN_ID)
+    await _invoke(plan, workspace, steps=STANDARD_STEPS)
+
+    client = _FakeCdsClient(FIXTURES / "grib_magic.nc")
+    monkeypatch.setattr(cds_mod, "build_cds_client", lambda: client)
+    _, acquired = await _invoke(
+        acquire,
+        workspace,
+        step_id="acquire",
+        mode="cds",
+        cds_request=_cds_request(),
+    )
+    _assert_failure_envelope(acquired, "CLIMATE_DATA_INVALID")
+    data_dir = workspace / ".climate" / "data" / RUN_ID
+    assert not data_dir.exists() or list(data_dir.rglob("*")) == []
+
+    # 截断文件即使被放进 workspace 也不得产生 profile artifact
+    workspace2, _registry2 = await _acquire_cds_fixture(
+        tmp_path / "ok", monkeypatch, FIXTURES / "minimal_t2m.nc"
+    )
+    inspect2 = _registry2.get("climate_inspect_dataset")
+    assert inspect2 is not None
+    target = next(
+        path
+        for path in (workspace2 / ".climate" / "data" / RUN_ID).rglob("*.nc")
+        if path.is_file()
+    )
+    target.write_bytes((FIXTURES / "truncated.nc").read_bytes())
+    _, inspected = await _invoke(inspect2, workspace2, step_id="inspect")
+    _assert_failure_envelope(inspected, "CLIMATE_DATA_INVALID")
+    profile = workspace2 / ".climate" / "output" / RUN_ID / "profile.json"
+    assert not profile.exists()
+
+
+@pytest.mark.asyncio
+async def test_inspect_optional_reader_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openharness.climate import formats as formats_mod
+
+    workspace, registry = await _acquire_cds_fixture(
+        tmp_path, monkeypatch, FIXTURES / "minimal_t2m.nc"
+    )
+    inspect = registry.get("climate_inspect_dataset")
+    assert inspect is not None
+    monkeypatch.setattr(formats_mod, "netcdf4_available", lambda: False)
+    _, payload = await _invoke(inspect, workspace, step_id="inspect")
+    _assert_failure_envelope(payload, "CLIMATE_DEPENDENCY_MISSING")
+    assert payload["error"]["details"]["reason"] == "netCDF4"
+    assert "C:\\" not in payload["error"]["message"]
+    profile = workspace / ".climate" / "output" / RUN_ID / "profile.json"
+    assert not profile.exists()

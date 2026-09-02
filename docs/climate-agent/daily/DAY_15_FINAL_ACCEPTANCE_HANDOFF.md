@@ -170,15 +170,38 @@ README 最终包含：
 
 ## 最终验收清单
 
-- [ ] 全部离线测试、全量回归、Ruff 通过。
-- [ ] real_offline 四场景通过。
-- [ ] 默认测试/CI 禁网。
-- [ ] 真实 integration 有明确运行证据或诚实 GAP。
-- [ ] MODEL-001 有 3 次/2 次通过证据或诚实 GAP。
-- [ ] 所有 PASS 均有实现和测试 node ID。
-- [ ] 无凭证、真实数据、缓存、临时文件和绝对路径。
-- [ ] README 可从空 workspace 复现。
-- [ ] 简历数字全部可复核。
+- [x] 全部离线测试、全量回归、Ruff 通过。（Climate 257 passed / 1 skipped；全量 1388 passed / 23 failed / 12 skipped，失败不含 Climate；Ruff PASS）
+- [x] real_offline 四场景通过。`real_pass_rate=1.0`
+- [x] 默认测试/CI 禁网。`CLIMATE_INTEGRATION=0` 时 integration skip
+- [x] 真实 integration 有明确运行证据或诚实 GAP。Day 15 本机 `::test_real_cds_minimal_netcdf_smoke` 1 passed in 47.18s
+- [x] MODEL-001 有 3 次/2 次通过证据或诚实 GAP。`evals/baselines/climate-real-9b592ba.json` passes=3/3；当前 skill/config/scenario 与 baseline identity 指纹一致
+- [x] 所有 PASS 均有实现和测试 node ID。见 SPEC 第 16 节
+- [x] 无凭证、真实数据、缓存、临时文件和绝对路径进入拟提交集（`evals/reports/*.json` gitignore；不提交 `.cdsapirc`）
+- [x] README 可从空 workspace 复现。
+- [x] 简历数字全部可复核。
+
+GitHub Actions 未推送：CI-001 远程证据仍为 GAP。未自动提交、未推送。
+
+## Day 15 实测报告（2026-09-01）
+
+```text
+ClimWorkflow 15 天最终报告：
+- 当前 commit/分支：9b592ba / feat/climworkflow-mvp（工作区 dirty；G4 实现尚未提交）
+- G0/G1/G2/G3/G4：G0～G3 PASS（Offline Engineering MVP）；G4 本机 PASS；GitHub Actions GAP
+- Climate pytest：collect 258；CLIMATE_INTEGRATION=0 → 257 passed, 1 skipped in 124.29s
+- 全量 pytest：1388 passed, 23 failed, 12 skipped in 215.36s（失败均为上游 Windows POSIX/时区/符号链接/cmd，0 Climate）
+- Ruff：All checks passed
+- real_offline：4/4，real_pass_rate=1.0；sample 777ms / cached 215ms / recovery 476ms / hook 4641ms；墙钟 47102 ms
+- climate_integration：1 passed in 47.18s（本会话显式 CLIMATE_INTEGRATION=1；未回显凭证）
+- 真实 Agent baseline：passes=3/3，min_passes=2；deepseek-v4-pro；114042/78628/71389 ms；requested/effective=cds
+- blocker/high 修复：无源码 blocker/high。文档收口：README/SPEC/面试材料去掉“G4 未实现/仅 G0”过时表述；DAY_14 EOF 多余空行
+- 剩余 GAP：未推送 GitHub Actions；Windows 上游 23 fail；real_agent TraceRecord.run_id 为 null（medium）；permission_mode 配置未驱动 checker（medium）
+- 安全检查：baseline/config 无 api_key/.cdsapirc/sk-/本机绝对路径；PermissionChecker 含 */.cdsapirc；默认 CI CLIMATE_INTEGRATION=0
+- 可复现 Demo：README 空 workspace sample_pipeline；恢复 climate_read_context
+- 实测简历指标：Climate 257/1；real_offline 1.0；CDS smoke 1 passed / 47.18s；real_agent 3/3
+- 是否可提交：可以在人工确认后提交 ClimWorkflow 源码/测试/Eval/Skill/文档/脱敏 baseline；排除凭证、真实数据、缓存、evals/reports
+- 是否建议推送：提交并人工复核后再单独决定；禁止 force push；推送后才有 GitHub CI 证据
+```
 
 ## 提交与推送（必须分开授权）
 

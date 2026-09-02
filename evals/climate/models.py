@@ -156,6 +156,8 @@ class TraceRecord(BaseModel):
             raise ValueError("synthetic Trace 不得声称已执行工具或模型")
         if self.mode is EvalMode.real_offline and self.synthetic:
             raise ValueError("real_offline Trace 不得标记 synthetic")
+        if self.mode is EvalMode.real_agent and self.synthetic:
+            raise ValueError("real_agent Trace 不得标记 synthetic")
         if self.recovery is not None:
             _reject_sensitive_payload(self.recovery)
         encoded = json.dumps(self.model_dump(mode="json"), ensure_ascii=False)

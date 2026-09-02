@@ -211,6 +211,7 @@ class WorkflowStateMachine:
         result: dict[str, Any] | None = None,
         error: dict[str, Any] | ClimateErrorObject | None = None,
         artifacts: list[Artifact] | None = None,
+        event_data: dict[str, Any] | None = None,
     ) -> RunContext:
         current = self._repo.load_run(run_id)
         if current.version != expected_version:
@@ -291,7 +292,7 @@ class WorkflowStateMachine:
             timestamp=now,
             type=_STEP_EVENT_TYPE[event],  # type: ignore[arg-type]
             step_id=step_id,
-            data={},
+            data=dict(event_data or {}),
         )
         new_artifacts = list(current.artifacts)
         if event == "success" and artifacts:

@@ -251,7 +251,7 @@ class ClimatePlanStepsTool(ClimateTool):
 
 class ClimateAcquireDataTool(ClimateTool):
     name = "climate_acquire_data"
-    description = "按 plan 获取数据集。G2 支持离线 sample/local CSV。"
+    description = "按 plan 获取数据集。支持离线 sample/local CSV 与 G4 CDS（默认不 fallback）。"
     input_model = ClimateAcquireDataInput
 
     async def execute(
@@ -272,7 +272,7 @@ class ClimateAcquireDataTool(ClimateTool):
 
 class ClimateInspectDatasetTool(ClimateTool):
     name = "climate_inspect_dataset"
-    description = "检查 dataset 并写入有界 CSV profile；会更新 Context。"
+    description = "检查 dataset 并写入有界 profile（CSV 或冻结的 NetCDF/GRIB）；会更新 Context。"
     input_model = ClimateInspectDatasetInput
 
     async def execute(

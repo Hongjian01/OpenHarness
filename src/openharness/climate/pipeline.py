@@ -13,9 +13,15 @@ from pathlib import Path
 from typing import Any
 
 from openharness.climate.errors import ClimateError, climate_error, redact_secrets
-from openharness.climate.models import Artifact, Event, RunContext, Step
-from openharness.climate.paths import WriteZone, resolve_workspace_path, validate_local_source_file
-from openharness.climate.repository import ContextRepository
+from openharness.climate.models import Artifact, CdsRequestInput, Event, RunContext, Step
+from openharness.climate.paths import (
+    WriteZone,
+    resolve_workspace_path,
+    to_workspace_relative_posix,
+    validate_local_source_file,
+    validate_write_zone,
+)
+from openharness.climate.repository import ContextRepository, PublishedFile
 from openharness.climate.state import WorkflowStateMachine
 
 _REQUIRED_ACTIONS = frozenset(
@@ -44,6 +50,16 @@ def build_sample_csv() -> bytes:
         precipitation = float((index * 3) % 10)
         lines.append(f"{day.isoformat()},{temperature:.1f},{precipitation:.1f}")
     return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def publish_sample_dataset(repo: ContextRepository, run_id: str) -> PublishedFile:
+    """sample 获取的公共服务：固定 CSV，原子发布到 run data 区。"""
+    return repo.publish_run_file(
+        run_id,
+        f".climate/data/{run_id}/sample.csv",
+        build_sample_csv(),
+        zone=WriteZone.DATA,
+    )
 
 
 def init_workflow(
@@ -110,13 +126,30 @@ def acquire_data(
     _require_running(current, workspace=repo.workspace)
     step = _require_step(current, step_id, expected_action="acquire_data", workspace=repo.workspace)
 
+    parsed_cds: CdsRequestInput | None = None
+    cds_dest: Path | None = None
+    cds_relative: str | None = None
     if mode == "cds":
-        raise climate_error(
-            "CLIMATE_FORMAT_UNSUPPORTED",
-            "G2 不支持 cds 模式，且不得降级为 sample",
-            details={"field": "mode", "allowed": ["sample", "local"]},
-            workspace=repo.workspace,
-        )
+        if path is not None:
+            raise climate_error(
+                "CLIMATE_INVALID_INPUT",
+                "cds 模式不得提供 path",
+                details={"field": "path", "step_id": step_id},
+                workspace=repo.workspace,
+            )
+        if cds_request is None:
+            raise climate_error(
+                "CLIMATE_INVALID_INPUT",
+                "cds 模式必须提供 cds_request",
+                details={"field": "cds_request", "step_id": step_id},
+                workspace=repo.workspace,
+            )
+        from openharness.climate.cds import FORMAT_EXTENSION, parse_cds_request
+
+        parsed_cds = parse_cds_request(cds_request)
+        cds_relative = f".climate/data/{resolved}/cds-{step_id}{FORMAT_EXTENSION[parsed_cds.format]}"
+        cds_dest = resolve_workspace_path(repo.workspace, cds_relative)
+        validate_write_zone(repo.workspace, cds_dest, WriteZone.DATA, run_id=resolved)
     source_file = None
     dest_relative = None
     if mode == "local":
@@ -159,16 +192,17 @@ def acquire_data(
                 details={"field": "mode", "step_id": step_id},
                 workspace=repo.workspace,
             )
-    else:
+    elif mode != "cds":
         raise climate_error(
             "CLIMATE_INVALID_INPUT",
             "不支持的 acquisition 模式",
-            details={"field": "mode", "allowed": ["sample", "local"], "step_id": step_id},
+            details={"field": "mode", "allowed": ["sample", "local", "cds"], "step_id": step_id},
             workspace=repo.workspace,
         )
 
     _require_dependencies(current, step, workspace=repo.workspace)
-    digest = canonical_input_hash({"mode": mode, "path": path, "cds_request": cds_request})
+    hash_request = parsed_cds.model_dump(mode="json") if parsed_cds is not None else cds_request
+    digest = canonical_input_hash({"mode": mode, "path": path, "cds_request": hash_request})
     replay = _replay_payload(current, step, digest)
     if replay is not None:
         return replay, current.run_id, current.version
@@ -179,8 +213,46 @@ def acquire_data(
         input_hash=digest,
         expected_version=current.version,
     )
+    audit: dict[str, Any] = {}
     try:
-        if mode == "local":
+        if mode == "cds":
+            if parsed_cds is None or cds_dest is None or cds_relative is None:
+                raise climate_error(
+                    "CLIMATE_INVALID_INPUT",
+                    "cds 模式缺少已校验的请求",
+                    details={"field": "cds_request", "step_id": step_id},
+                    workspace=repo.workspace,
+                )
+            from openharness.climate.cds import MEDIA_TYPES, allow_sample_fallback, download_cds_dataset
+
+            try:
+                download_cds_dataset(parsed_cds, cds_dest)
+            except ClimateError as cds_exc:
+                if not allow_sample_fallback(parsed_cds, cds_exc):
+                    raise
+                _cleanup_acquire_parts(repo.workspace, resolved)
+                published = publish_sample_dataset(repo, resolved)
+                artifact_id = "data-primary"
+                media_type = "text/csv"
+                audit = {
+                    "requested_mode": "cds",
+                    "effective_mode": "sample",
+                    "fallback_reason": cds_exc.code,
+                }
+            else:
+                digest_bytes = hashlib.sha256(cds_dest.read_bytes()).hexdigest()
+                published = PublishedFile(
+                    path=to_workspace_relative_posix(repo.workspace, cds_dest),
+                    size_bytes=cds_dest.stat().st_size,
+                    sha256=f"sha256:{digest_bytes}",
+                )
+                artifact_id = f"dataset-{step_id}"
+                media_type = MEDIA_TYPES[parsed_cds.format]
+                audit = {
+                    "requested_mode": "cds",
+                    "effective_mode": "cds",
+                }
+        elif mode == "local":
             if source_file is None or dest_relative is None:
                 raise climate_error(
                     "CLIMATE_INVALID_INPUT",
@@ -195,19 +267,16 @@ def acquire_data(
                 zone=WriteZone.DATA,
             )
             artifact_id = f"dataset-{step_id}"
+            media_type = "text/csv"
         else:
-            published = repo.publish_run_file(
-                resolved,
-                f".climate/data/{resolved}/sample.csv",
-                build_sample_csv(),
-                zone=WriteZone.DATA,
-            )
+            published = publish_sample_dataset(repo, resolved)
             artifact_id = "data-primary"
+            media_type = "text/csv"
         artifact = Artifact(
             artifact_id=artifact_id,
             kind="dataset",
             path=published.path,
-            media_type="text/csv",
+            media_type=media_type,
             size_bytes=published.size_bytes,
             sha256=published.sha256,
             created_by_step=step_id,
@@ -219,6 +288,7 @@ def acquire_data(
             "media_type": artifact.media_type,
             "size_bytes": published.size_bytes,
             "sha256": published.sha256,
+            **audit,
         }
         saved = state.apply_step_event(
             resolved,
@@ -228,6 +298,7 @@ def acquire_data(
             input_hash=digest,
             result={"artifact_ids": [artifact.artifact_id], **payload},
             artifacts=[artifact],
+            event_data=audit or None,
         )
         return payload, saved.run_id, saved.version
     except ClimateError as exc:
@@ -276,7 +347,7 @@ def inspect_dataset(
         expected_version=current.version,
     )
     try:
-        profile = _inspect_csv(target, relative_path=relative, workspace=repo.workspace)
+        profile = _inspect_file(target, relative_path=relative, workspace=repo.workspace)
         profile_bytes = (
             json.dumps(profile, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         ).encode("utf-8")
@@ -809,6 +880,43 @@ def _ancestors(step_id: str, by_id: dict[str, Any]) -> set[str]:
     return seen
 
 
+def _inspect_file(path: Path, *, relative_path: str, workspace: Path) -> dict[str, Any]:
+    """按扩展名分发 CSV 或已冻结科学格式；profile 仅为 JSON 值。"""
+    from openharness.climate.formats import SUPPORTED_FORMATS, format_from_extension
+
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise climate_error(
+            "CLIMATE_INVALID_PATH",
+            "无法读取 dataset",
+            details={"path": relative_path, "reason": type(exc).__name__},
+            workspace=workspace,
+        ) from exc
+    if size > _MAX_INSPECT_BYTES:
+        raise climate_error(
+            "CLIMATE_DATA_INVALID",
+            "dataset 超过 50 MiB 读取上限",
+            details={"path": relative_path, "field": "path"},
+            workspace=workspace,
+        )
+    claimed = format_from_extension(path)
+    if claimed in SUPPORTED_FORMATS:
+        from openharness.climate.formats import validate_published_artifact
+        from openharness.climate.readers import read_scientific_profile
+
+        fmt = validate_published_artifact(path, claimed)
+        return read_scientific_profile(path, fmt)
+    if path.name.lower().endswith(".csv"):
+        return _inspect_csv(path, relative_path=relative_path, workspace=workspace)
+    raise climate_error(
+        "CLIMATE_FORMAT_UNSUPPORTED",
+        "inspect 仅支持 CSV 与已冻结科学格式",
+        details={"path": relative_path, "field": "path"},
+        workspace=workspace,
+    )
+
+
 def _inspect_csv(path: Path, *, relative_path: str, workspace: Path) -> dict[str, Any]:
     try:
         size = path.stat().st_size
@@ -829,7 +937,7 @@ def _inspect_csv(path: Path, *, relative_path: str, workspace: Path) -> dict[str
     if not path.name.lower().endswith(".csv"):
         raise climate_error(
             "CLIMATE_FORMAT_UNSUPPORTED",
-            "G2 inspect 仅支持 CSV",
+            "inspect 仅支持 CSV 与已冻结科学格式",
             details={"path": relative_path, "field": "path"},
             workspace=workspace,
         )
@@ -992,6 +1100,37 @@ def _cleanup_output_parts(workspace: Path, run_id: str) -> None:
                 path.unlink()
 
 
+def _prepare_scientific_plot(
+    path: Path,
+    *,
+    claimed_format: str,
+    relative_path: str,
+    chart_type: str,
+    x_name: str | None,
+    y_name: str,
+    title: str,
+    workspace: Path,
+) -> PreparedPlot:
+    """从冻结格式读取有界 1-D 序列；不把库对象带入绘图数据。"""
+    del x_name, relative_path, workspace
+    from openharness.climate.formats import validate_published_artifact
+    from openharness.climate.readers import read_plot_values
+
+    fmt = validate_published_artifact(path, claimed_format)
+    values = read_plot_values(path, fmt, y_name)
+    x_values = None
+    if chart_type in {"line", "bar"}:
+        x_values = tuple(str(index) for index in range(len(values)))
+    return PreparedPlot(
+        chart_type=chart_type,
+        x_values=x_values,
+        y_values=values,
+        x_name=None,
+        y_name=y_name,
+        title=title,
+    )
+
+
 def _prepare_plot_series(
     path: Path,
     *,
@@ -1019,10 +1158,24 @@ def _prepare_plot_series(
             workspace=workspace,
         )
     if not path.name.lower().endswith(".csv"):
-        raise climate_error(
-            "CLIMATE_FORMAT_UNSUPPORTED",
-            "G2 plot 仅支持 CSV",
-            details={"path": relative_path, "field": "path"},
+        from openharness.climate.formats import SUPPORTED_FORMATS, format_from_extension
+
+        claimed = format_from_extension(path)
+        if claimed not in SUPPORTED_FORMATS:
+            raise climate_error(
+                "CLIMATE_FORMAT_UNSUPPORTED",
+                "plot 仅支持 CSV 与已冻结科学格式",
+                details={"path": relative_path, "field": "path"},
+                workspace=workspace,
+            )
+        return _prepare_scientific_plot(
+            path,
+            claimed_format=claimed,
+            relative_path=relative_path,
+            chart_type=chart_type,
+            x_name=x_name,
+            y_name=y_name,
+            title=title,
             workspace=workspace,
         )
 
@@ -1285,6 +1438,11 @@ def _render_report_markdown(
         ]
         if names:
             lines.append("- columns: " + ", ".join(names))
+    variables = profile.get("variables")
+    if isinstance(variables, list):
+        var_names = [str(item) for item in variables if isinstance(item, str)]
+        if var_names:
+            lines.append("- variables: " + ", ".join(var_names))
     warnings = profile.get("warnings")
     if isinstance(warnings, list) and warnings:
         lines.append("- warnings: " + str(len(warnings)))

@@ -35,6 +35,9 @@ jobs:
 
       - name: Run test suite
         run: uv run pytest -q
+        env:
+          # 默认禁网：climate_integration 仅在显式 CLIMATE_INTEGRATION=1 且凭证可用时运行
+          CLIMATE_INTEGRATION: "0"
 
   python-quality:
     name: Python quality

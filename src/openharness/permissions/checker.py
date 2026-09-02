@@ -34,6 +34,8 @@ SENSITIVE_PATH_PATTERNS: tuple[str, ...] = (
     # OpenHarness own credential stores
     "*/.openharness/credentials.json",
     "*/.openharness/copilot_auth.json",
+    # CDS / Copernicus 凭证（SEC-002：全部权限模式均不可覆盖）
+    "*/.cdsapirc",
 )
 
 

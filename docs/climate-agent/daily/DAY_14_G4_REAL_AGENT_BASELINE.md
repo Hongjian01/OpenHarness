@@ -204,13 +204,13 @@ git status --short
 
 ## 验收清单
 
-- [ ] 用户显式提供外部准备和网络许可。
-- [ ] 最小真实 CDS 请求成功，且 fallback=false。
-- [ ] 三次运行配置一致、workspace 独立。
-- [ ] 至少 2 次通过所有硬断言。
-- [ ] 代码/配置变化后重新计数。
-- [ ] baseline 保留失败结果且完全脱敏。
-- [ ] 默认 CI/pytest 仍不访问网络。
+- [x] 用户显式提供外部准备和网络许可。
+- [x] 最小真实 CDS 请求成功，且 fallback=false。
+- [x] 三次运行配置一致、workspace 独立。
+- [x] 至少 2 次通过所有硬断言。
+- [x] 代码/配置变化后重新计数。
+- [x] baseline 保留失败结果且完全脱敏。
+- [x] 默认 CI/pytest 仍不访问网络。
 
 ## 风险与止损
 
@@ -233,4 +233,21 @@ Day 14：
 - 脱敏检查：
 - MODEL-001：PASS/GAP
 - Day 15 blocker：
+```
+
+## 日终报告（2026-09-01）
+
+```text
+Day 14：
+- 用户外部准备：完成（CDSAPI_KEY 用户环境；模型走 OpenHarness 外部存储 file:openai；已允许网络）
+- 真实 CDS smoke：PASS。tests/test_climate/test_cds.py::test_real_cds_minimal_netcdf_smoke 在 CLIMATE_INTEGRATION=1 下 1 passed（约 47s）。requested_mode=cds，effective_mode=cds，allow_sample_fallback=false，非空 NetCDF，magic/扩展名一致，无 .part，Context/日志脱敏。默认 CLIMATE_INTEGRATION=0 仍 skip。
+- 固定模型配置摘要：profile=openai-compatible，provider=openai，model=deepseek-v4-pro，effort=medium，max_turns=200，permission_mode=full_auto，timeout_seconds=600，scenario=cds_minimal_smoke，skill=climate-ds。CDS：reanalysis-era5-single-levels / 2m_temperature / 1 天（2025-01-01）/ 小区域 [40.5,116.0,39.5,117.0] / netcdf / allow_sample_fallback=false。git=9b592ba dirty，fingerprint=133a5d75e81d995198b008b9bd5637570714dc84bbf7dd56d22fbf34992a04ab。配置不含密钥。
+- Run 1：PASS，workspace 独立，status=completed，duration_ms=114042（acquire≈67s），requested/effective=cds，无 fallback，硬断言全部通过。
+- Run 2：PASS，workspace 独立，status=completed，duration_ms=78628（acquire≈44s），requested/effective=cds，无 fallback，硬断言全部通过。
+- Run 3：PASS，workspace 独立，status=completed，duration_ms=71389（acquire≈33s），requested/effective=cds，无 fallback，硬断言全部通过。收尾有 httpcore GeneratorExit 噪音，进程退出码 0。
+- 通过率：3/3（min_passes=2）
+- baseline 路径：evals/baselines/climate-real-9b592ba.json（baseline_published=true）
+- 脱敏检查：PASS。baseline/config 无 api_key、.cdsapirc、sk-、本机绝对路径；artifact 为 workspace 相对路径；真实 NetCDF 在评测沙箱删除，未入库。
+- MODEL-001：PASS
+- Day 15 blocker：G4 人工总验收与未推送的 GitHub CI。不得把项目状态标成 G4 PASS。用户环境 CLIMATE_INTEGRATION 应保持 0，以免默认 pytest 访问 CDS。未提交、未推送。
 ```

@@ -1,7 +1,7 @@
 # ClimWorkflow 规格说明
 
-**版本**：v0.1 Offline Engineering MVP
-**状态**：G0～G3 适用需求已通过 Day 10（2026-08-28）总验收。称谓 **ClimWorkflow Offline Engineering MVP**。G4 CDS/ERA5 与真实模型 baseline 未开始（DEC-G4-001 仍开放）。
+**版本**：v0.1 Offline Engineering MVP + G4 本机验收
+**状态**：G0～G3 适用需求已通过 Day 10（2026-08-28）总验收。称谓 **ClimWorkflow Offline Engineering MVP** 仍成立。DEC-G4-001 已于 Day 11（2026-08-30）关闭。Day 12～14 完成 CDS mock、NetCDF/GRIB inspect、显式 fallback、真实 CDS 与 `real_agent` 3/3。Day 15（2026-09-01）本机人工总验收：G4 适用需求 PASS；GitHub Actions 未推送，CI-001 远程证据仍为 GAP。
 
 **基线日期**：2026-08-22  
 **目标仓库**：`E:\agent\ClimWorkflow`（`git@github.com:Hongjian01/OpenHarness.git`）  
@@ -82,17 +82,17 @@ G4 在此基础上增加真实 CDS/ERA5 获取和真实模型 smoke baseline。
 | EXTEND | `create_default_tool_registry` | G2 注册 7 个 Climate 工具；不改变 registry 语义 | PASS |
 | REUSE | Pydantic v2 | 工具输入和持久化模型校验 | 已存在 |
 | REUSE | `PermissionChecker` | 根据 `is_read_only` 控制写工具；路径参数统一命名为 `path` 以参与路径规则 | 已存在 |
-| EXTEND | `SENSITIVE_PATH_PATTERNS` | G4 将 `.cdsapirc` 加入不可覆盖的敏感路径拒绝规则 | GAP |
+| EXTEND | `SENSITIVE_PATH_PATTERNS` | G4 将 `.cdsapirc` 加入不可覆盖的敏感路径拒绝规则 | PASS（Day 12：`*/.cdsapirc`；default/plan/full_auto 拒绝） |
 | REUSE | `HookExecutor` / 事件 | G3 采集轨迹并以前置 Hook 演示输出路径 guard | 已存在 |
 | REUSE | `atomic_write_text` | Context、索引、事务标记、报告文本的原子替换 | 已存在 |
 | REUSE | `exclusive_file_lock` | workspace/run 读改写临界区 | 已存在 |
 | REUSE | Memory / compact | 保持会话连续性；不保存权威 Climate 状态 | 已存在 |
-| EXTEND | Python optional dependencies | G2 可选 matplotlib；G4 可选 cdsapi 和科学数据读取依赖 | PASS (G2 matplotlib extra `plot`) |
+| EXTEND | Python optional dependencies | G2 可选 matplotlib；G4 可选 cdsapi 和科学数据读取依赖 | PASS (G2 matplotlib extra `plot`；Day 11：`climate` extra = netCDF4/eccodes/cdsapi；`dev` 含 netCDF4+eccodes 供默认格式测试) |
 | EXTEND | README / Skill | G3 增加可复现离线演示与 `climate-ds` Skill | PASS (Day 09：README 空 workspace Demo；`.openharness/skills/climate-ds/SKILL.md`) |
-| NEW | `src/openharness/climate/` | 路径、模型、仓储、状态机、流水线和工具 | PASS（G1～G3：`errors`/`paths`/`models`/`repository`/`state`/`tools`/`pipeline`/`registry`）；Skill 为项目级 `.openharness/skills/climate-ds`；CDS GAP |
+| NEW | `src/openharness/climate/` | 路径、模型、仓储、状态机、流水线和工具 | PASS（G1～G3：`errors`/`paths`/`models`/`repository`/`state`/`tools`/`pipeline`/`registry`）；Day 11：`formats`（allowlist/magic/optional reader）；Day 12：`cds`（CdsRequestInput/adapter/`.part` 下载）；Day 13：`readers`（NetCDF/GRIB 窄 adapter）与显式 sample fallback；Skill 为项目级 `.openharness/skills/climate-ds` |
 | NEW | `.climate/` workspace state | run Context、数据、产物、锁、事务和备份 | PASS（G1 布局/Context/index/锁/事务/备份；G2 sample/local CSV、inspect profile、plot、report.md） |
-| NEW | `tests/test_climate/` | Climate 单元、契约、集成和安全测试 | PASS（G1～G3；Day 10 collect 198 Climate + 2 Skill）；G4 `test_cds.py` GAP |
-| NEW | `evals/` Climate suite | scenario、trace、runner、硬断言和 baseline | PASS（G3 四场景 real_offline + synthetic_dry_run）；real_agent baseline GAP |
+| NEW | `tests/test_climate/` | Climate 单元、契约、集成和安全测试 | PASS（G1～G3；Day 10 collect 198 Climate + 2 Skill）；Day 11 collect 214（含 `test_formats.py` 16 项）；Day 12 collect 231（含 `test_cds.py` 17 项，1 个 `climate_integration` 默认 skip）；Day 13 collect 248（`test_formats.py` 20 项、`test_cds.py` 23 项）；Day 14 collect 258（`test_formats.py` 20 项、`test_cds.py` 25 项含 1 个 `climate_integration`、`test_evals.py` 27 项） |
+| NEW | `evals/` Climate suite | scenario、trace、runner、硬断言和 baseline | PASS（G3 四场景 real_offline + synthetic_dry_run）；Day 14 `real_agent` baseline PASS：`evals/configs/climate-real.json`、`evals/climate/scenarios/cds_minimal_smoke.yaml`、`evals/baselines/climate-real-9b592ba.json`（3/3） |
 
 ### 4.3 基线要求
 
@@ -145,9 +145,12 @@ POSIX 形式；输出不得暴露本机绝对路径。
   目录、workspace 绝对路径、API key、CDS token、`.cdsapirc` 内容或完整凭证异常文本。
   （G1 已由路径/错误脱敏测试覆盖；G2 report Markdown 脱敏已覆盖；G3 Eval Trace 密钥扫描已由
   `test_evals.py::test_trace_record_requires_section_12_fields_and_redacts_input` 覆盖。）
-- **SEC-002（MUST，G4，GAP）**：CDS 凭证只由 cdsapi 的标准外部配置读取；Climate 输入模型、
+- **SEC-002（MUST，G4，PASS）**：CDS 凭证只由 cdsapi 的标准外部配置读取；Climate 输入模型、
   Context、Eval fixture 和仓库文件不得接收或持久化凭证；`.cdsapirc` 必须加入
   `SENSITIVE_PATH_PATTERNS`，在全部权限模式下阻止通用工具读取。
+  （Day 12：`test_cds.py::test_credentials_never_enter_logs_context_trace_or_toolresult`；
+  `::test_cds_request_rejects_unknown_and_credential_and_mode_fields`；
+  `tests/test_permissions/test_checker.py::TestSensitivePathProtection::test_cdsapirc_blocked_in_all_modes`。）
 
 ## 6. Context Schema
 
@@ -278,9 +281,12 @@ workspace.lock → <run_id>.lock → 读 → expected_version 校验 → 写 →
 只访问单 run 且不改变 index 时仅持有 run lock。任何代码不得先持有 run lock 再请求
 workspace lock。
 
-- **IO-001（MUST，G1～G4，PASS/GAP）**：Context、index、事务、迁移备份和最终文本产物必须原子发布；
+- **IO-001（MUST，G1～G4，PASS）**：Context、index、事务、迁移备份和最终文本产物必须原子发布；
   失败后保留最后稳定文件并清理本次临时文件。（G1 Context/index/WAL/备份 PASS；G2 sample CSV、
-  inspect profile、plot 图像与 report.md PASS；G4 下载仍 GAP。）
+  inspect profile、plot 图像与 report.md PASS；Day 12 G4 mock 下载 `.part` 原子发布 PASS；
+  Day 13 显式 sample fallback 复用 `publish_sample_dataset` 原子发布 PASS；Day 14 真实 CDS：
+  `tests/test_climate/test_cds.py::test_real_cds_minimal_netcdf_smoke` 与
+  `evals/baselines/climate-real-9b592ba.json` 三次 NetCDF 原子发布。）
 - **LOCK-001（MUST，G1，PASS）**：所有共享状态读改写必须使用现有 `exclusive_file_lock`，遵守固定
   锁序；并发测试不得出现丢失更新或死锁。
 - **CON-001（MUST，G1，PASS）**：每个 mutation 接受内部 `expected_version`；不匹配时返回
@@ -406,11 +412,12 @@ mutating 的 `climate_init_workflow`（含显式 `resume_run_id`）或其他 mut
 执行前由 QueryEngine 直接返回 ToolResultBlock，该原始阻断结果不受 Climate ToolResult envelope
 约束；不得为统一 envelope 修改 QueryEngine 语义。
 
-- **ERR-001（MUST，G1～G4，PASS/GAP）**：所有 Climate 失败必须遵循统一 envelope、稳定错误码和
+- **ERR-001（MUST，G1～G4，PASS）**：所有 Climate 失败必须遵循统一 envelope、稳定错误码和
   `is_error` 一致性；不得把 Python traceback 当成工具输出。
   （G1 共享错误基础 PASS；G2 七工具 ToolResult 一致性 PASS；G3 Foundation synthetic
   Trace 不含 traceback/密钥 PASS；Day 08 真实离线 Trace PASS；Day 09 Hook Trace
-  `CLIMATE_HOOK_BLOCKED` provenance PASS。）
+  `CLIMATE_HOOK_BLOCKED` provenance PASS。Day 13：`::test_fallback_false_returns_original_timeout_error`。
+  Day 14 真实路径沿用同一 envelope。）
 - **ERR-002（MUST，G1～G4，PASS）**：message 面向用户且经过脱敏；details 只含字段名、相对路径、
   状态和允许值等安全诊断信息。
 
@@ -505,11 +512,14 @@ local 复制允许的 `.csv` 到 run data 目录并计算摘要，禁止引用�
 }
 ```
 
-G2 支持 CSV。结果包含 `row_count`、列名、推断 dtype、每列 null count、数值 min/max/mean 和最多
-20 条 validation warning。读取有界：文件最大 50 MiB，统计流式或分块，结果不得包含原始全表。
+G2 支持 CSV。G4 将 Day 11 冻结的 NetCDF/GRIB 接入 inspect：扩展名、magic、解析器一致后由窄
+adapter 读取有界 profile（变量、维度、时间/经纬坐标、min/max/mean），不得把库对象写入
+Context。optional reader 缺失返回 `CLIMATE_DEPENDENCY_MISSING`。读取有界：文件最大 50 MiB，
+结果不得包含原始全表或全网格。
 
-- **TOOL-INSPECT-001（MUST，G2，PASS）**：inspect 不得修改 dataset；必须验证依赖、格式、大小和
-  schema，确定性写入有界 profile 结果与事件。（G2-A CSV 模式 PASS。）
+- **TOOL-INSPECT-001（MUST，G2/G4，PASS）**：inspect 不得修改 dataset；必须验证依赖、格式、大小和
+  schema，确定性写入有界 profile 结果与事件。（G2-A CSV 模式 PASS。Day 13：NetCDF/GRIB fixture
+  解析、伪装/截断拒绝、optional 缺失与有界 profile PASS。）
 
 ### 10.6 `climate_analyze_plot`
 
@@ -641,8 +651,9 @@ final_run_status, final_context_version, artifact_manifest, assertion_results
 
 - **SDD-001（MUST，G1～G4，PASS）**：每个实现需求先增加会失败的自动化测试，再写最小实现；
   阶段验收保留需求 ID 到测试 node ID 的映射。（G1-A/B/C、G2-A/B Day 04～06、Day 07 Eval
-  Foundation、Day 08 real_offline 三场景、Day 09 Hook/Skill/README 已执行 RED→GREEN
-  并回填 node ID。）
+  Foundation、Day 08 real_offline 三场景、Day 09 Hook/Skill/README、Day 11 格式契约、
+  Day 12 CDS mock、Day 13 inspect/fallback、Day 14 real_agent 3-run/2-pass 已执行
+  RED→GREEN 并回填 node ID。）
 - **TEST-001（MUST，G1，PASS）**：路径测试覆盖正常相对路径、`..`、绝对/drive-relative、混合
   分隔符、UNC、symlink/junction 逃逸和错误脱敏。
 - **TEST-002（MUST，G1，PASS）**：Repository 测试覆盖原子写故障注入、锁顺序/并发、版本冲突、
@@ -656,17 +667,26 @@ final_run_status, final_context_version, artifact_manifest, assertion_results
 - **TEST-005（MUST，G3，PASS）**：Eval 测试覆盖四个场景、synthetic 标记、硬断言失败退出和
   Trace 脱敏；真实离线场景不得请求网络。
   （Day 07 Foundation PASS；Day 08 三核心真实离线 + 禁网 PASS；Day 09 Hook 场景与 README
-  Demo smoke PASS。`test_evals.py` 19 项。）
-- **TEST-006（MUST，G4，GAP）**：CDS 单元测试使用 mock，真实网络测试带
+  Demo smoke PASS。Day 09 时 `test_evals.py` 19 项；Day 14 为 27 项。）
+- **TEST-006（MUST，G4，PASS）**：CDS 单元测试使用 mock，真实网络测试带
   `pytest.mark.climate_integration`，该 marker 必须在 `pyproject.toml` 注册且默认 CI 跳过。
+  （Day 11：`test_formats.py` 16 项、marker 已注册、默认 skip。Day 12：`test_cds.py` 17 项 mock
+  下载 PASS；`::test_default_tests_forbid_network`。Day 13：inspect/fallback mock 接入。
+  Day 14 collect 258（`uv run pytest tests/test_climate --collect-only -q`，2026-09-01）：
+  `test_cds.py` 25 项、`test_formats.py` 20 项、`test_evals.py` 27 项。默认
+  `CLIMATE_INTEGRATION=0`：257 passed, 1 skipped。显式 `CLIMATE_INTEGRATION=1`：
+  `tests/test_climate/test_cds.py::test_real_cds_minimal_netcdf_smoke` 1 passed。
+  真实 Agent 三次独立 workspace requested/effective=cds，禁止 fallback。）
 - **CI-001（MUST，G1～G4，PASS/GAP）**：每阶段至少通过受影响 Climate 测试、`uv run ruff check
   src tests scripts evals`（目录存在后）和必要 OpenHarness 回归；G2 起全量 `uv run pytest -q`
   在 Python 3.10/3.11 CI 通过。
-  （Day 10：`uv run pytest tests/test_climate --collect-only -q` 198 tests；本机
-  `uv run pytest tests/test_climate -q` 198 passed in 52.29s；`uv run ruff check src tests
-  scripts evals` PASS；`uv run python -m evals --suite climate --mode real_offline` 4/4、
-  `real_pass_rate=1.0`。GitHub Actions 未推送故无远程证据；本机 Windows 上 OpenHarness
-  若干 POSIX/时区/符号链接/cmd 失败不计入 Climate 回归。）
+  （Day 15：`uv run pytest tests/test_climate --collect-only -q` 258 tests；本机
+  `CLIMATE_INTEGRATION=0` 下 `uv run pytest tests/test_climate -q` 257 passed, 1 skipped
+  in 124.29s。显式集成：`::test_real_cds_minimal_netcdf_smoke` 1 passed in 47.18s。
+  `uv run ruff check src tests scripts evals` PASS。本机全量 `uv run pytest -q`：
+  1388 passed, 23 failed, 12 skipped（失败均为 OpenHarness Windows POSIX/时区/符号链接/cmd，
+  不含 `tests/test_climate`）。四场景 `real_offline` `real_pass_rate=1.0`。GitHub Actions
+  未推送故无远程证据；上述 Windows 失败不计入 Climate 回归。）
 
 ## 14. G4：CDS / ERA5 契约
 
@@ -687,18 +707,71 @@ final_run_status, final_context_version, artifact_manifest, assertion_results
 area 顺序为 north, west, south, east；经纬度有界且 north > south。日期为闭区间、start ≤ end，
 最长 366 天。dataset/variables 使用显式 allowlist；format 为 `netcdf | grib`。
 
-- **CDS-001（MUST，G4，GAP）**：G4 必须验证 dataset、variables、area、日期和 format；cdsapi
+ClimWorkflow `cds_request.format` 映射到 CDS API 字段 `data_format`（官方 form 2026-08-30：
+`grib` | `netcdf`，其中 netcdf 标签为 “NetCDF4 (Experimental)”，默认 `grib`）。G4 固定
+`product_type=reanalysis`，不把 ensemble 暴露给用户请求。`download_format` 固定
+`unarchived`，要求单文件产物。
+
+### DEC-G4-001 冻结（Day 11，2026-08-30）
+
+检索日期均为 2026-08-30。版本取自 PyPI JSON，不凭记忆。
+
+| 决策 | 冻结值 | 证据与理由 |
+|---|---|---|
+| NetCDF 读取库 | optional `netCDF4>=1.7.4`（Unidata；MIT；`requires-python >=3.10`） | PyPI `netCDF4==1.7.4`；官方文档可读写 classic 与 NetCDF-4。本机 Windows Python 3.13 安装并读取 8884 字节合成 fixture，`data_model=NETCDF4`。wheel：`cp310-win_amd64`、`cp311-abi3-win_amd64`、`manylinux_2_27/2_28 x86_64`（覆盖 CI 3.10/3.11）。 |
+| 不采用最新 xarray 作为 G4 硬依赖 | 明确不钉 xarray | PyPI `xarray==2026.7.0` / `2026.4.0` 的 `requires-python >=3.11`，与本仓库 CI Python 3.10 冲突。`xarray==2025.6.1` 仍支持 3.10，但会引入 pandas 且不是最小 reader。 |
+| 不采用 h5netcdf 作为主 reader | 明确不钉 | 仅覆盖 HDF5/NetCDF-4，不含 classic；`netCDF4` 已覆盖 CDS 标注的 NetCDF4 与 classic。 |
+| GRIB 读取库 | optional `eccodes>=2.48.0`（ECMWF；Apache-2.0） | PyPI `eccodes==2.48.0` 提供 Windows `cp310`–`cp313-win_amd64` wheel；Linux/macOS 依赖 `eccodeslib==2.48.0.26` 的 `manylinux_2_28` cp310/cp311 wheel。本机 `python -m eccodes selfcheck`：`Found: ecCodes v2.48.0` / `Your system is ready.` 合成 GRIB 179 字节可解析 `shortName=t` 与经纬角点。官方 README 仍写 “Windows support is untested”，本机实测通过，CI 走 Linux 官方路径。 |
+| 不采用 cfgrib/xarray 作为 G4 硬依赖 | 明确不钉 cfgrib | 本机 `cfgrib==0.9.15.1` 可导入，但 `engine='cfgrib'` 需要 xarray。G4 inspect 用 eccodes 直接读有界 profile，避免 Python 3.10 与体积问题。 |
+| CDS 下载库 | optional `cdsapi>=0.7.7`（Apache-2.0；`requires-python >=3.8`；classifier 含 3.10–3.13） | PyPI `cdsapi==0.7.7`。只进入 extra `climate`，**不进入 `dev`**，默认 pytest/CI 不安装、不 import。Day 11 未实现 client、未访问真实 CDS。 |
+| Extra / CI 安装 | `plot`：matplotlib；`climate`：netCDF4+eccodes+cdsapi；`dev`：既有质量工具 + matplotlib + netCDF4+eccodes | 默认 `uv sync --extra dev` 可跑格式测试，不把 cdsapi 变成硬依赖。与 G2 matplotlib optional 属性一致：缺 reader 返回 `CLIMATE_DEPENDENCY_MISSING`，G0～G3 CSV 路径不需要这些库。`tool.uv.environments` 排除 win32+ARM64：netCDF4 1.7.4 在该平台声明 numpy>=2.3，与 Python 3.10 冲突。 |
+| 支持格式 | `netcdf`（classic `CDF\\x01`/`CDF\\x02` 与 HDF5/NetCDF-4）与 `grib` | magic 来源：Unidata netCDF-C File Format Specifications；GRIB 以 ASCII `GRIB` 开头。扩展名 `.nc/.nc4/.netcdf` 对 netcdf；`.grib/.grb/.grib2` 对 grib。 |
+| 校验方法 | 非空常规文件 → magic → 扩展名 → `claimed_format` 三者一致 → 解析器二次打开 | 不一致或解析失败（截断/损坏）→ `CLIMATE_DATA_INVALID`。缺 `netCDF4`/`eccodes` → `CLIMATE_DEPENDENCY_MISSING`。消息与 details 脱敏，不含绝对路径或 token。 |
+| Dataset allowlist | 仅 `reanalysis-era5-single-levels` | CDS Catalogue STAC `id` 与 SPEC 示例一致。DOI `10.24381/cds.adbb2d47`；许可 CC-BY-4.0。不包含 pressure-levels / monthly / complete。 |
+| Variable allowlist | `2m_temperature`, `2m_dewpoint_temperature`, `10m_u_component_of_wind`, `10m_v_component_of_wind`, `mean_sea_level_pressure`, `surface_pressure`, `total_precipitation`, `sea_surface_temperature` | 取自官方 form JSON Popular/大气组。排除浪场变量（`mean_wave_*` 等；网格 0.5°，官方 help 警告与大气混下会拆文件）。来源 URL 见 `formats.ALLOWLIST_SOURCE`。 |
+| Fixture | 合成 `tests/test_climate/fixtures/minimal_t2m.nc`（约 9KiB）与 `minimal.grib`（179B）；外加截断/伪装文件 | 自行生成，非 ERA5 下载，可合法进入测试。许可证随仓库 MIT。 |
+| pytest marker | `climate_integration` 注册于 `pyproject.toml` | 默认 skip：`CLIMATE_INTEGRATION!=1`。真实运行必须同时满足 marker + `CLIMATE_INTEGRATION=1` + `CDSAPI_KEY` 存在。只检查环境变量是否存在，不读 `~/.cdsapirc`，skip reason 不得含路径或 token。 |
+| 默认 CI 禁网 | `uv run pytest -q` 不访问 CDS；workflow 设 `CLIMATE_INTEGRATION=0` | Day 11 不实现 CDS client。G3 `real_offline` 仍使用既有 socket guard。 |
+
+明确 **非 GAP**：G4 支持 GRIB。本机 Windows 安装与读取已通过，Linux CI 有 `eccodeslib` manylinux wheel，不得在实现阶段静默降级为仅 NetCDF。
+
+明确 **Day 14 已关闭**：固定模型 `real_agent` 连续 3 次、至少 2 次硬断言，脱敏 baseline
+`evals/baselines/climate-real-9b592ba.json`（本机 `passes=3/3`，dirty 工作区已记录 digest）。
+真实 CDS 走 cdsapi 标准外部配置。`pytest.mark.climate_integration` 在
+`CLIMATE_INTEGRATION=1` 且 `CDSAPI_KEY` 存在时 1 passed；默认 `CLIMATE_INTEGRATION=0` 仍 skip。
+
+- **CDS-001（MUST，G4，PASS）**：G4 必须验证 dataset、variables、area、日期和 format；cdsapi
   为 optional dependency，缺失时返回稳定错误。
-- **CDS-002（MUST，G4，GAP）**：下载必须使用 `.part`，校验非空、magic/content 与扩展名一致后
+  （Day 11：dataset/variables/format allowlist 已冻结。Day 12：area/日期/未知字段/凭证字段与
+  cdsapi 缺失 node ID 见矩阵 CDS-001。Day 14：
+  `tests/test_climate/test_cds.py::test_retrieve_payload_maps_iso_dates_to_era5_form`。）
+- **CDS-002（MUST，G4，PASS）**：下载必须使用 `.part`，校验非空、magic/content 与扩展名一致后
   原子替换；失败清理临时文件，不发布 artifact。
-- **CDS-003（MUST，G4，GAP）**：只对 timeout/rate-limit 做有界指数退避，最多 3 次；其他错误
+  （Day 11：magic/扩展名/解析器与 optional 缺失已测。Day 12：`.part` 原子发布 node ID 见矩阵
+  CDS-002。Day 14 真实下载：`tests/test_climate/test_cds.py::test_real_cds_minimal_netcdf_smoke`。）
+- **CDS-003（MUST，G4，PASS）**：只对 timeout/rate-limit 做有界指数退避，最多 3 次；其他错误
   不重试。默认不得 fallback。
-- **CDS-004（MUST，G4，GAP）**：仅当 `allow_sample_fallback=true` 时可显式 fallback，并记录
+  （Day 12 node ID 见矩阵 CDS-003。显式 `allow_sample_fallback=true` 属于 CDS-004，Day 13。）
+- **CDS-004（MUST，G4，PASS）**：仅当 `allow_sample_fallback=true` 时可显式 fallback，并记录
   `requested_mode`、`effective_mode`、`fallback_reason`；只有耗尽重试后的
   `CLIMATE_EXTERNAL_TIMEOUT` 或 `CLIMATE_EXTERNAL_RATE_LIMIT` 允许 fallback，认证、输入、依赖、
   格式、路径、写入和其他 external failure 一律不得 fallback。错误和记录均须脱敏。
-- **MODEL-001（MUST，G4，GAP）**：固定 provider/model/config 的真实 Agent smoke 连续运行 3 次，
+  （Day 13 node ID 见矩阵 CDS-004。下载层永不 fallback；编排层复用 `publish_sample_dataset`。）
+- **MODEL-001（MUST，G4，PASS）**：固定 provider/model/config 的真实 Agent smoke 连续运行 3 次，
   至少 2 次满足全部硬断言才可写 baseline；baseline 记录配置、提交、时间、各次结果和非敏感耗时。
+  （Day 14：`evals/configs/climate-real.json` 冻结 `openai-compatible` / `deepseek-v4-pro` /
+  `max_turns=200` / 1 天小区域 NetCDF / `allow_sample_fallback=false`。CLI
+  `uv run python -m evals --suite climate --mode real_agent --runs 3`；
+  `evals/baselines/climate-real-9b592ba.json` `passes=3/3`，三次独立 workspace，fingerprint
+  含 dirty digest。离线门闩：`tests/test_climate/test_evals.py::test_real_agent_runs_must_be_three`；
+  `::test_real_agent_two_pass_publishes_and_keeps_failure`；
+  `::test_real_agent_one_pass_does_not_publish_success`；
+  `::test_real_agent_isolated_workspaces_and_fingerprint`；
+  `::test_climate_real_config_is_non_sensitive`；
+  `::test_config_fingerprint_changes_with_scenario_or_commit`；
+  `::test_agent_config_rejects_secret_fields`；
+  `::test_real_agent_stamps_per_tool_duration_from_start_complete`。
+  真实 CDS 节点：`tests/test_climate/test_cds.py::test_real_cds_minimal_netcdf_smoke`。）
 
 G4 固定入口为：
 
@@ -712,7 +785,8 @@ uv run python -m evals --suite climate --mode real_agent `
 `agent-config` 只能保存非敏感 provider/profile/model/effort/max_turns/scenario 引用，凭证继续由
 OpenHarness 外部配置解析。任一次修改代码、commit、config 或 scenario 后，三次计数必须重新开始。
 
-G4 的 NetCDF/GRIB 读取库与变量 allowlist 在 DEC-G4-001 解决前不实施；该决策不阻塞 G1～G3。
+G4 的 NetCDF/GRIB 读取库与变量 allowlist 已由 DEC-G4-001 冻结（见上表）；该决策不阻塞 G1～G3。
+Day 12 起必须按冻结值实施 CDS client，不得另行选择未评审依赖。
 
 ## 15. 阶段计划与验收门
 
@@ -739,13 +813,20 @@ Hook 硬断言、Skill loader 和复现文档通过。Day 10（2026-08-28）总�
 
 ### Phase G4：真实数据与真实模型
 
-范围：CDS/ERA5、格式读取、mock/marked integration tests、真实 Agent baseline。开始前关闭
-DEC-G4-001；默认 CI 仍不访问网络。
+范围：CDS/ERA5、格式读取、mock/marked integration tests、真实 Agent baseline。DEC-G4-001 已关闭；
+默认 CI 仍不访问网络。Day 12 已完成 CDS-001～003 的 mock 路径；Day 13 已完成 CDS-004 与
+NetCDF/GRIB inspect 接入。Day 14 已完成 MODEL-001（3/3 硬断言，脱敏 baseline）。Day 15
+（2026-09-01）本机人工总验收通过；GitHub Actions 仍未推送。
 
 - **PHASE-001（MUST，G0～G4，PASS/GAP）**：前一阶段全部适用需求达到 PASS 且人工验收后才能进入下一
   阶段；阶段外实现、测试迁移或完成声明均视为验收失败。
   （Day 10：G0～G3 适用需求均有真实 node ID，Climate pytest / Ruff / 四场景 real_offline
-  通过。称谓 **ClimWorkflow Offline Engineering MVP**。G4 未开始。）
+  通过。称谓 **ClimWorkflow Offline Engineering MVP**。Day 11 已关闭 DEC-G4-001。Day 12：
+  CDS mock 输入/下载/脱敏 PASS；Day 13：inspect/fallback mock PASS；Day 14：MODEL-001
+  `real_agent` 3/3 与 `climate_integration` 真实 CDS PASS。Day 15（2026-09-01）本机人工
+  总验收：Climate 257 passed / 1 skipped，Ruff PASS，四场景 `real_offline` `real_pass_rate=1.0`，
+  `climate_integration` 1 passed。默认 pytest 仍 `CLIMATE_INTEGRATION=0` skip。GitHub
+  Actions 未推送。）
 - **DOC-001（MUST，G3，PASS）**：README 必须从空 workspace 给出可复制的离线 demo、预期产物、
   恢复步骤和测试命令，不要求密钥。
   （Day 09：`tests/test_climate/test_evals.py::test_readme_offline_demo_from_empty_workspace`；
@@ -778,11 +859,20 @@ Day 09 已将 HOOK-001、SKILL-001、DOC-001、EVAL-001/002（Hook）、TEST-005
 MEM-001（Skill/compact 指导）、CTX-002（Skill）与 ERR-001（Hook Trace）更新为 PASS。
 Day 10（2026-08-28）总验收：G0～G3 适用需求均有真实 pytest node ID；Climate 198 passed；
 四场景 `real_offline` `real_pass_rate=1.0`；Ruff PASS。称谓 **ClimWorkflow Offline
-Engineering MVP**。G4 需求保持 GAP。
-Day 10 追踪矩阵回填已用 `uv run pytest tests/test_climate --collect-only -q`（198 tests）
-与 `uv run pytest tests/test_climate/test_evals.py tests/test_skills/test_climate_skill.py --collect-only -q`
-（19 + 2）核对实际 node ID。本机 `uv run pytest tests/test_climate -q`（198 passed in 52.29s）。
-`test_evals.py` 共 19 项（Foundation 10 + Day 08 六项 + Day 09 Hook/README 三项）。
+Engineering MVP**。Day 11（2026-08-30）关闭 DEC-G4-001。Day 11 collect 214 tests（`test_formats.py` 16 项）。
+Day 12（2026-08-30）回填已用 `uv run pytest tests/test_climate --collect-only -q`（231 tests，
+其中 `test_cds.py` 17 项、`test_formats.py` 16 项、`test_evals.py` 19 项）核对实际 node ID。
+本机 `uv run pytest tests/test_climate -q`（230 passed, 1 skipped：`climate_integration`）。
+`uv run ruff check src tests scripts evals` PASS。CDS-001～003、SEC-002 mock 路径 PASS；
+当时 CDS-004 仍为 GAP。Day 13（2026-08-30 实现；2026-09-01 用
+`uv run pytest tests/test_climate --collect-only -q` 回填）collect 248 tests（`test_formats.py`
+20 项、`test_cds.py` 23 项、`test_evals.py` 19 项）；本机 `uv run pytest tests/test_climate -q`
+（247 passed, 1 skipped）。CDS-004 与 TOOL-INSPECT-001 G4 扩展 PASS。Day 14（2026-09-01）
+用 `uv run pytest tests/test_climate --collect-only -q` 回填：258 tests（`test_formats.py`
+20 项、`test_cds.py` 25 项含 `::test_real_cds_minimal_netcdf_smoke`、`test_evals.py` 27 项）。
+本机 `CLIMATE_INTEGRATION=0`：257 passed, 1 skipped。显式 `CLIMATE_INTEGRATION=1`：
+`::test_real_cds_minimal_netcdf_smoke` 1 passed。MODEL-001 PASS：
+`evals/baselines/climate-real-9b592ba.json` `passes=3/3`，三次独立 workspace，requested/effective=cds。
 
 | 需求 ID | 预定测试 / 评审 | 阶段 | 状态 |
 |---|---|---|---|
@@ -793,13 +883,13 @@ Day 10 追踪矩阵回填已用 `uv run pytest tests/test_climate --collect-only
 | PATH-002 | `tests/test_climate/test_paths.py::test_rejects_link_escape`；`::test_rejects_when_parent_chain_cannot_be_verified` | G1 | PASS |
 | PATH-003 | `tests/test_climate/test_paths.py::test_enforces_write_zones`；G2 plot/report 只写 output：`tests/test_climate/test_tools.py::test_plot_png_and_svg_fallback`；`::test_report_dependencies_artifact_and_completion` | G1/G2 | PASS |
 | PATH-004 | `tests/test_climate/test_paths.py::test_local_source_must_be_regular_workspace_file`；`tests/test_climate/test_tools.py::test_local_rejects_unsafe_and_non_regular_sources` | G2 | PASS |
-| SEC-001 | G1 `tests/test_climate/test_paths.py::test_errors_are_redacted`；G2 `tests/test_climate/test_tools.py::test_report_dependencies_artifact_and_completion`；G3 `tests/test_climate/test_evals.py::test_trace_record_requires_section_12_fields_and_redacts_input`；`::test_sample_pipeline_real_offline_hard_assertions`；`::test_cli_real_offline_runs_core_scenarios`；`::test_pre_tool_output_guard_blocks_before_execute`；`::test_readme_offline_demo_from_empty_workspace` | G1～G4 | PASS |
-| SEC-002 | 预定（尚未创建）：`test_cds.py::test_credentials_never_enter_models_or_outputs` + PermissionChecker `.cdsapirc` 全模式拒绝 | G4 | GAP |
+| SEC-001 | G1 `tests/test_climate/test_paths.py::test_errors_are_redacted`；G2 `tests/test_climate/test_tools.py::test_report_dependencies_artifact_and_completion`；G3 `tests/test_climate/test_evals.py::test_trace_record_requires_section_12_fields_and_redacts_input`；`::test_sample_pipeline_real_offline_hard_assertions`；`::test_cli_real_offline_runs_core_scenarios`；`::test_pre_tool_output_guard_blocks_before_execute`；`::test_readme_offline_demo_from_empty_workspace`；Day 11：`tests/test_climate/test_formats.py::test_default_skip_reason_has_no_credentials_or_paths`；Day 12：`tests/test_climate/test_cds.py::test_credentials_never_enter_logs_context_trace_or_toolresult`。Day 13：`tests/test_climate/test_cds.py::test_fallback_is_explicit_and_audited`（Trace/Context/ToolResult 审计字段脱敏）。Day 14：`tests/test_climate/test_cds.py::test_real_cds_minimal_netcdf_smoke`；`tests/test_climate/test_evals.py::test_climate_real_config_is_non_sensitive`；`::test_agent_config_rejects_secret_fields`；`::test_real_agent_one_pass_does_not_publish_success` | G1～G4 | PASS |
+| SEC-002 | Day 12：`tests/test_climate/test_cds.py::test_credentials_never_enter_logs_context_trace_or_toolresult`；`::test_cds_request_rejects_unknown_and_credential_and_mode_fields`；`::test_cds_request_serialization_contains_no_secrets`；`tests/test_permissions/test_checker.py::TestSensitivePathProtection::test_cdsapirc_blocked_in_all_modes`（参数：`full_auto`/`default`/`plan`）；`::test_every_builtin_pattern_has_coverage[.cdsapirc]`。Day 14：`tests/test_climate/test_evals.py::test_climate_real_config_is_non_sensitive`；`::test_agent_config_rejects_secret_fields` | G4 | PASS |
 | CTX-001 | `tests/test_climate/test_models.py::test_context_v2_invariants_and_roundtrip`；`::test_rejects_unknown_fields`；`::test_rejects_invalid_uuid_and_time_and_enums`；`::test_rejects_duplicate_and_broken_references`；`::test_rejects_non_contiguous_event_sequence`；`::test_version_and_time_invariants`；`::test_rejects_unsafe_artifact_path_and_bad_hash`；`::test_structured_error_shape` | G1 | PASS |
 | CTX-002 | G1 PASS：`tests/test_climate/test_repository.py::test_context_is_authoritative_across_new_session`；G3 PASS：`tests/test_climate/test_evals.py::test_multiturn_recovery_destroys_memory_and_restores_from_disk`；Day 09 Skill：`tests/test_skills/test_climate_skill.py::test_climate_skill_frontmatter_and_guidance`（遇错先 `climate_read_context`，禁止 compact/猜测） | G1/G3 | PASS |
 | CTX-003 | `tests/test_climate/test_repository.py::test_read_failures_are_distinct_and_non_destructive` | G1 | PASS |
 | MIG-001 | `tests/test_climate/test_repository.py::test_v1_migration_is_backed_up_and_idempotent` | G1 | PASS |
-| IO-001 | G1 Context/index/事务/迁移备份 PASS：`tests/test_climate/test_repository.py::test_atomic_publish_failure_preserves_stable_files`；`::test_atomic_write_format_and_helper_used`；`::test_v1_migration_is_backed_up_and_idempotent`；`::test_active_run_transaction_recovers_each_fault_point`；G2 sample/local/profile/plot/report 原子发布 PASS：`tests/test_climate/test_tools.py::test_sample_is_deterministic_and_atomic`；`::test_sample_and_local_are_deterministic_and_atomic`；`::test_inspect_is_bounded_and_does_not_touch_dataset`；`::test_plot_png_and_svg_fallback`；`::test_report_dependencies_artifact_and_completion` | G1～G4 | PASS (G1 Context/index/WAL/备份；G2 sample/local CSV/inspect profile/plot/report.md)；GAP (G4 下载) |
+| IO-001 | G1 Context/index/事务/迁移备份 PASS：`tests/test_climate/test_repository.py::test_atomic_publish_failure_preserves_stable_files`；`::test_atomic_write_format_and_helper_used`；`::test_v1_migration_is_backed_up_and_idempotent`；`::test_active_run_transaction_recovers_each_fault_point`；G2 sample/local/profile/plot/report 原子发布 PASS：`tests/test_climate/test_tools.py::test_sample_is_deterministic_and_atomic`；`::test_sample_and_local_are_deterministic_and_atomic`；`::test_inspect_is_bounded_and_does_not_touch_dataset`；`::test_plot_png_and_svg_fallback`；`::test_report_dependencies_artifact_and_completion`；Day 12 G4 mock `.part` PASS：`tests/test_climate/test_cds.py::test_download_success_uses_part_then_atomic_replace`；`::test_download_rejects_empty_and_magic_mismatch_and_cleans_part`。Day 13 fallback sample 原子发布 PASS：`tests/test_climate/test_cds.py::test_fallback_is_explicit_and_audited`（损坏 `.part` 不得成为 sample 输入）；`tests/test_climate/test_pipeline.py::test_mock_cds_timeout_explicit_fallback_then_inspect_plot_report`。Day 14 真实 CDS：`tests/test_climate/test_cds.py::test_real_cds_minimal_netcdf_smoke`；`evals/baselines/climate-real-9b592ba.json` 三次 `requested_mode=cds`/`effective_mode=cds`/NetCDF | G1～G4 | PASS |
 | LOCK-001 | `tests/test_climate/test_repository.py::test_concurrent_updates_follow_lock_order`；`::test_active_run_acquires_workspace_before_run_lock`；`::test_lock_unavailable_maps_to_stable_error` | G1 | PASS |
 | CON-001 | `tests/test_climate/test_repository.py::test_expected_version_conflict_does_not_write` | G1 | PASS |
 | REC-001 | `tests/test_climate/test_repository.py::test_corrupt_or_unwritable_context_is_not_overwritten` | G1 | PASS |
@@ -808,17 +898,17 @@ Day 10 追踪矩阵回填已用 `uv run pytest tests/test_climate --collect-only
 | STATE-001 | `tests/test_climate/test_state.py::test_transition_table`；`::test_transition_table_legal_run`；`::test_transition_table_illegal_run`；`::test_transition_table_legal_step`；`::test_transition_table_illegal_step` | G1 | PASS |
 | STATE-002 | `tests/test_climate/test_state.py::test_attempt_and_event_sequence_rules` | G1 | PASS |
 | STATE-003 | `tests/test_climate/test_state.py::test_error_recording_preserves_original_failure` | G1 | PASS |
-| IDEM-001 | G1 PASS：`tests/test_climate/test_state.py::test_replay_same_input_and_conflict_on_different_input`；G2 PASS：`tests/test_climate/test_tools.py::test_local_dependency_and_idempotency`；`::test_plot_idempotency_and_conflict`；`::test_report_dependencies_artifact_and_completion`；G3 Eval：`tests/test_climate/test_evals.py::test_cached_inspect_real_offline_hard_assertions`（二次 inspect 同输入、version 不变） | G1/G2/G3 | PASS |
-| ERR-001 | G1 PASS：`tests/test_climate/test_errors.py::test_error_envelope`；G2 七工具 PASS：`tests/test_climate/test_tools.py::test_all_tool_results_match_error_envelope`；G3 Hook Trace PASS：`tests/test_climate/test_evals.py::test_pre_tool_output_guard_blocks_before_execute`（`CLIMATE_HOOK_BLOCKED`，非 `CLIMATE_INVALID_INPUT`） | G1～G3 | PASS |
+| IDEM-001 | G1 PASS：`tests/test_climate/test_state.py::test_replay_same_input_and_conflict_on_different_input`；G2 PASS：`tests/test_climate/test_tools.py::test_local_dependency_and_idempotency`；`::test_plot_idempotency_and_conflict`；`::test_report_dependencies_artifact_and_completion`；G3 Eval：`tests/test_climate/test_evals.py::test_cached_inspect_real_offline_hard_assertions`（二次 inspect 同输入、version 不变）。Day 13：`tests/test_climate/test_cds.py::test_fallback_switch_is_part_of_input_hash`（`allow_sample_fallback` 计入 input hash） | G1/G2/G3/G4 | PASS |
+| ERR-001 | G1 PASS：`tests/test_climate/test_errors.py::test_error_envelope`；G2 七工具 PASS：`tests/test_climate/test_tools.py::test_all_tool_results_match_error_envelope`；G3 Hook Trace PASS：`tests/test_climate/test_evals.py::test_pre_tool_output_guard_blocks_before_execute`（`CLIMATE_HOOK_BLOCKED`，非 `CLIMATE_INVALID_INPUT`）。Day 13：`tests/test_climate/test_cds.py::test_fallback_false_returns_original_timeout_error`；`::test_fallback_rejects_errors_not_frozen_in_spec`（稳定码、无 traceback） | G1～G4 | PASS |
 | ERR-002 | `tests/test_climate/test_errors.py::test_error_details_allowlist_and_redaction` | G1 | PASS |
 | TOOL-BASE-001 | `tests/test_climate/test_tools.py::test_all_tools_use_shared_contracts`；`tests/test_climate/test_registry.py::test_climate_registry_names_unique_and_schema_exportable`；`::test_independent_registry_does_not_overwrite_same_name`；`::test_default_registry_has_exact_climate_tools` | G2 | PASS |
 | REG-001 | `tests/test_climate/test_registry.py::test_climate_tool_names_do_not_collide_with_default_registry`；`::test_default_registry_has_exact_climate_tools`；`::test_climate_registry_names_unique_and_schema_exportable`；`::test_independent_registry_does_not_overwrite_same_name` | G2 | PASS |
 | TOOL-INIT-001 | `tests/test_climate/test_tools.py::test_init_create_duplicate_and_resume` | G2 | PASS |
 | TOOL-PLAN-001 | `tests/test_climate/test_tools.py::test_plan_validates_dag_and_is_atomic`；`::test_plan_rejects_illegal_dag_without_partial_write`（参数：`missing_action_type`/`duplicate_step_id`/`missing_dependency`/`self_dependency`/`cycle_inspect_plot`/`report_cannot_reach_plot`）；`::test_plan_step_fields_are_strict`；`::test_plan_cannot_replace_after_business_step_started` | G2 | PASS |
 | TOOL-ACQUIRE-001 | sample PASS：`tests/test_climate/test_tools.py::test_sample_is_deterministic_and_atomic`；`tests/test_climate/test_pipeline.py::test_offline_vertical_slice_from_empty_workspace`；local PASS：`tests/test_climate/test_tools.py::test_sample_and_local_are_deterministic_and_atomic`；`tests/test_climate/test_pipeline.py::test_offline_local_vertical_slice_from_empty_workspace` | G2 | PASS |
-| TOOL-ACQUIRE-002 | `tests/test_climate/test_tools.py::test_acquire_mode_fields_and_no_implicit_fallback`；`tests/test_climate/test_registry.py::test_rejects_extra_fields_and_invalid_uuid_and_mode`；`tests/test_climate/test_pipeline.py::test_illegal_order_and_cds_are_stable_errors` | G2 | PASS |
-| TOOL-INSPECT-001 | `tests/test_climate/test_tools.py::test_inspect_is_bounded_and_does_not_touch_dataset`；`tests/test_climate/test_pipeline.py::test_inspect_rejects_unsafe_path` | G2 | PASS |
-| TOOL-PLOT-001 | `tests/test_climate/test_tools.py::test_plot_png_and_svg_fallback`；`::test_plot_rejects_columns_paths_and_uninspected_data`；`::test_plot_idempotency_and_conflict`；`tests/test_climate/test_pipeline.py::test_offline_vertical_slice_from_empty_workspace`；`::test_offline_sample_svg_fallback_end_to_end` | G2 | PASS |
+| TOOL-ACQUIRE-002 | `tests/test_climate/test_tools.py::test_acquire_mode_fields_and_no_implicit_fallback`；`tests/test_climate/test_registry.py::test_rejects_extra_fields_and_invalid_uuid_and_mode`；`tests/test_climate/test_pipeline.py::test_illegal_order_and_cds_are_stable_errors`。Day 13 默认不静默 fallback：`tests/test_climate/test_cds.py::test_allow_sample_fallback_default_false_does_not_fallback`；`::test_download_layer_never_fallbacks_even_when_flag_true`；`::test_fallback_false_returns_original_timeout_error`；`tests/test_climate/test_pipeline.py::test_mock_cds_fail_without_fallback_has_no_sample` | G2/G4 | PASS |
+| TOOL-INSPECT-001 | G2 PASS：`tests/test_climate/test_tools.py::test_inspect_is_bounded_and_does_not_touch_dataset`；`tests/test_climate/test_pipeline.py::test_inspect_rejects_unsafe_path`。Day 13 G4：`tests/test_climate/test_formats.py::test_netcdf_and_grib_profiles_include_bounded_statistics`；`::test_netcdf_rejects_missing_variable_empty_time_and_illegal_coords`；`::test_profile_is_bounded_and_does_not_modify_source`；`::test_extension_magic_and_parser_must_agree`；`tests/test_climate/test_tools.py::test_inspect_scientific_fixture_is_bounded_and_does_not_touch_dataset`；`::test_inspect_rejects_truncated_and_masquerade`；`::test_inspect_optional_reader_missing` | G2/G4 | PASS |
+| TOOL-PLOT-001 | `tests/test_climate/test_tools.py::test_plot_png_and_svg_fallback`；`::test_plot_rejects_columns_paths_and_uninspected_data`；`::test_plot_idempotency_and_conflict`；`tests/test_climate/test_pipeline.py::test_offline_vertical_slice_from_empty_workspace`；`::test_offline_sample_svg_fallback_end_to_end`。Day 13 mock NetCDF histogram：`tests/test_climate/test_pipeline.py::test_mock_cds_netcdf_inspect_plot_report` | G2/G4 | PASS |
 | TOOL-REPORT-001 | `tests/test_climate/test_tools.py::test_report_dependencies_artifact_and_completion`；`tests/test_climate/test_pipeline.py::test_offline_vertical_slice_from_empty_workspace`；`::test_offline_local_vertical_slice_from_empty_workspace` | G2 | PASS |
 | TOOL-READ-001 | `tests/test_climate/test_tools.py::test_read_context_is_bounded_redacted_and_read_only` | G2 | PASS |
 | PERM-001 | G2 PASS：`tests/test_climate/test_tools.py::test_tool_permission_classification_and_path_forwarding`；`::test_local_rejects_unsafe_and_non_regular_sources`；`tests/test_climate/test_registry.py::test_read_only_classification`；`tests/test_climate/test_pipeline.py::test_inspect_rejects_unsafe_path`；`::test_query_engine_path_rules_block_climate_tools_from_default_registry` | G2 | PASS |
@@ -828,20 +918,20 @@ Day 10 追踪矩阵回填已用 `uv run pytest tests/test_climate --collect-only
 | EVAL-001 | Foundation：`tests/test_climate/test_evals.py::test_scenario_requires_fields_and_mode_enum`；`::test_load_sample_pipeline_yaml_roundtrip`；`::test_trace_record_requires_section_12_fields_and_redacts_input`；`::test_hard_assertion_success_and_failure`；`::test_cli_nonzero_when_hard_assertion_fails`；`::test_cli_accepts_suite_and_mode_flags`；`::test_missing_suite_or_scenario_returns_stable_diagnostic`。Day 08：`::test_sample_pipeline_real_offline_hard_assertions`；`::test_cached_inspect_real_offline_hard_assertions`；`::test_multiturn_recovery_destroys_memory_and_restores_from_disk`；`::test_cli_real_offline_runs_core_scenarios`。Day 09 Hook：`::test_pre_tool_output_guard_blocks_before_execute`；`::test_real_offline_scenarios_and_hook_provenance` | G3 | PASS |
 | EVAL-002 | Day 08：`tests/test_climate/test_evals.py::test_sample_pipeline_real_offline_hard_assertions`；`::test_cached_inspect_real_offline_hard_assertions`；`::test_multiturn_recovery_destroys_memory_and_restores_from_disk`；`::test_real_offline_scenarios_and_hook_provenance`；`::test_real_offline_forbids_network`；`::test_cli_real_offline_runs_core_scenarios`。Day 09：`::test_pre_tool_output_guard_blocks_before_execute` | G3 | PASS |
 | EVAL-003 | `tests/test_climate/test_evals.py::test_synthetic_dry_run_is_labeled_and_excluded_from_real_pass_rate`；`::test_runner_synthetic_adapter_does_not_call_tools`；`::test_real_agent_is_schema_recognized_but_g3_refuses_execution` | G3 | PASS |
-| SDD-001 | G1-A/B/C、G2-A/B Day 04～06、Day 07 Eval Foundation、Day 08 real_offline、Day 09 Hook/Skill/README：RED→GREEN；Day 09 node ID：`::test_pre_tool_output_guard_blocks_before_execute`；`tests/test_skills/test_climate_skill.py::test_climate_skill_loads_from_project_directory`；`::test_climate_skill_frontmatter_and_guidance`；`::test_readme_offline_demo_from_empty_workspace`；`::test_readme_documents_offline_mvp_demo_and_limits` | G1～G4 | PASS |
+| SDD-001 | G1-A/B/C、G2-A/B Day 04～06、Day 07 Eval Foundation、Day 08 real_offline、Day 09 Hook/Skill/README、Day 11 格式契约、Day 12 CDS mock 下载、Day 13 inspect/fallback、Day 14 real_agent 3-run/2-pass：RED→GREEN；Day 14 node ID：`tests/test_climate/test_evals.py::test_real_agent_runs_must_be_three`；`::test_real_agent_two_pass_publishes_and_keeps_failure`；`::test_real_agent_one_pass_does_not_publish_success`；`::test_real_agent_isolated_workspaces_and_fingerprint`；`::test_climate_real_config_is_non_sensitive`；`::test_config_fingerprint_changes_with_scenario_or_commit`；`::test_agent_config_rejects_secret_fields`；`::test_real_agent_stamps_per_tool_duration_from_start_complete`；`tests/test_climate/test_cds.py::test_real_cds_minimal_netcdf_smoke` | G1～G4 | PASS |
 | TEST-001 | G1 PASS：`tests/test_climate/test_paths.py` 的 `::test_accepts_safe_relative_paths`；`::test_rejects_unsafe_lexical_paths`；`::test_rejects_link_escape`；`::test_rejects_when_parent_chain_cannot_be_verified`；`::test_enforces_write_zones`；`::test_errors_are_redacted`；`::test_rejects_windows_drive_relative`；G2 PATH-004 的 `::test_local_source_must_be_regular_workspace_file` 计入 PATH-004/TEST-004 | G1 | PASS |
 | TEST-002 | `tests/test_climate/test_repository.py` 全文件（含 G1-B 主干与 `::test_v1_migration_is_backed_up_and_idempotent`；`::test_corrupt_or_unwritable_context_is_not_overwritten`；`::test_active_run_transaction_recovers_each_fault_point`；`::test_orphan_requires_explicit_resume`；`::test_active_run_acquires_workspace_before_run_lock`） | G1 | PASS |
 | TEST-003 | `tests/test_climate/test_state.py` 全文件（含 `::test_transition_table`；`::test_attempt_and_event_sequence_rules`；`::test_error_recording_preserves_original_failure`；`::test_replay_same_input_and_conflict_on_different_input` 及合法/非法参数化表） | G1 | PASS |
 | TEST-004 | G2 PASS：`tests/test_climate/test_registry.py` 全文件（含 `::test_climate_registry_names_unique_and_schema_exportable`；`::test_climate_tool_names_do_not_collide_with_default_registry`；`::test_default_registry_has_exact_climate_tools`）；`tests/test_climate/test_tools.py` 全文件（含 `::test_plot_png_and_svg_fallback`；`::test_plot_rejects_columns_paths_and_uninspected_data`；`::test_plot_idempotency_and_conflict`；`::test_report_dependencies_artifact_and_completion`）；`tests/test_climate/test_pipeline.py`（`::test_offline_vertical_slice_from_empty_workspace`；`::test_offline_local_vertical_slice_from_empty_workspace`；`::test_offline_sample_svg_fallback_end_to_end`；`::test_illegal_order_and_cds_are_stable_errors`；`::test_inspect_rejects_unsafe_path`；`::test_query_engine_path_rules_block_climate_tools_from_default_registry`）；`tests/test_climate/test_paths.py::test_local_source_must_be_regular_workspace_file` | G2 | PASS |
 | TEST-005 | Foundation：`tests/test_climate/test_evals.py::test_scenario_requires_fields_and_mode_enum`；`::test_load_sample_pipeline_yaml_roundtrip`；`::test_trace_record_requires_section_12_fields_and_redacts_input`；`::test_hard_assertion_success_and_failure`；`::test_cli_nonzero_when_hard_assertion_fails`；`::test_synthetic_dry_run_is_labeled_and_excluded_from_real_pass_rate`；`::test_cli_accepts_suite_and_mode_flags`；`::test_real_agent_is_schema_recognized_but_g3_refuses_execution`；`::test_missing_suite_or_scenario_returns_stable_diagnostic`；`::test_runner_synthetic_adapter_does_not_call_tools`。Day 08：`::test_sample_pipeline_real_offline_hard_assertions`；`::test_cached_inspect_real_offline_hard_assertions`；`::test_multiturn_recovery_destroys_memory_and_restores_from_disk`；`::test_real_offline_scenarios_and_hook_provenance`；`::test_real_offline_forbids_network`；`::test_cli_real_offline_runs_core_scenarios`。Day 09：`::test_pre_tool_output_guard_blocks_before_execute`；`::test_readme_offline_demo_from_empty_workspace`；`::test_readme_documents_offline_mvp_demo_and_limits` | G3 | PASS |
-| TEST-006 | 预定（尚未创建）：`test_cds.py` mock + marker 注册/默认 deselection 检查 | G4 | GAP |
-| CI-001 | Day 10：`uv run pytest tests/test_climate --collect-only -q`（198 tests）；本机 `uv run pytest tests/test_climate -q`（198 passed in 52.29s）；`uv run ruff check src tests scripts evals` PASS；`uv run python -m evals --suite climate --mode real_offline` 4/4、`real_pass_rate=1.0`（墙钟 10850ms）。本机 `uv run pytest -q`：1325 passed, 23 failed, 11 skipped（失败均为 OpenHarness Windows POSIX/时区/符号链接/cmd，0 个 Climate）。GitHub 3.10/3.11 未推送 | G1～G4 | PASS (本机 Climate/Ruff/real_offline)；GAP (未推送的 GitHub Actions) |
-| CDS-001 | 预定（尚未创建）：`test_cds.py::test_cds_request_validation_and_optional_dependency` | G4 | GAP |
-| CDS-002 | 预定（尚未创建）：`test_cds.py::test_download_publish_validates_content_and_cleans_part` | G4 | GAP |
-| CDS-003 | 预定（尚未创建）：`test_cds.py::test_retry_policy_only_timeout_and_rate_limit` | G4 | GAP |
-| CDS-004 | 预定（尚未创建）：`test_cds.py::test_fallback_is_explicit_and_audited` | G4 | GAP |
-| MODEL-001 | 预定（尚未创建）：`evals/baselines/climate-real-<commit>.json` 三次运行硬断言 | G4 | GAP |
-| PHASE-001 | Day 10：G0～G3 适用需求 PASS 且有真实 node ID；Climate pytest / Ruff / 四场景 real_offline 通过。称谓 ClimWorkflow Offline Engineering MVP。G4 未开始 | G0～G4 | PASS (G0～G3)；GAP (G4) |
+| TEST-006 | Day 11：`tests/test_climate/test_formats.py::test_pyproject_registers_climate_integration_marker`；`::test_default_skip_reason_has_no_credentials_or_paths`；`::test_enabled_without_credentials_skip_reason_has_no_secrets`；`::test_formats_module_does_not_import_cdsapi`。Day 12：`tests/test_climate/test_cds.py::test_default_tests_forbid_network`；`::test_cds_module_does_not_import_cdsapi`。Day 14：`tests/test_climate/test_cds.py::test_real_cds_minimal_netcdf_smoke`（`CLIMATE_INTEGRATION=1` 1 passed；默认 skip）；`evals/baselines/climate-real-9b592ba.json` 三次真实 CDS。collect 258 / 默认 257 passed 1 skipped | G4 | PASS |
+| CI-001 | Day 15（2026-09-01）：`uv run pytest tests/test_climate --collect-only -q`（258 tests）；本机 `CLIMATE_INTEGRATION=0` 下 `uv run pytest tests/test_climate -q`（257 passed, 1 skipped in 124.29s）；显式 `CLIMATE_INTEGRATION=1` 下 `::test_real_cds_minimal_netcdf_smoke` 1 passed in 47.18s；`uv run ruff check src tests scripts evals` PASS。全量 `uv run pytest -q`：1388 passed, 23 failed, 12 skipped（失败均为 OpenHarness Windows POSIX/时区/符号链接/cmd，不含 Climate）。`real_offline` 4/4、`real_pass_rate=1.0`。GitHub 3.10/3.11 未推送 | G1～G4 | PASS (本机 Climate/Ruff/real_offline/real_agent/climate_integration)；GAP (未推送的 GitHub Actions) |
+| CDS-001 | Day 11：`tests/test_climate/test_formats.py::test_allowlist_source_and_era5_variables`。Day 12：`tests/test_climate/test_cds.py::test_cds_request_allowlist_dataset_and_variables`；`::test_cds_request_variables_nonempty_deduped_canonical_order`；`::test_cds_request_area_bounds_and_north_gt_south`；`::test_cds_request_iso_dates_order_and_max_span`；`::test_cds_request_format_allowlist`；`::test_cds_request_rejects_unknown_and_credential_and_mode_fields`；`::test_cdsapi_missing_is_dependency_error`；`::test_cds_module_does_not_import_cdsapi`。Day 14：`::test_retrieve_payload_maps_iso_dates_to_era5_form` | G4 | PASS |
+| CDS-002 | Day 11：`tests/test_climate/test_formats.py::test_netcdf_fixture_reads_variables_dims_coords`；`::test_grib_fixture_reads_variables_dims_coords`；`::test_magic_bytes_match_unidata_and_grib`；`::test_truncated_and_masquerade_files_are_rejected`（参数：`truncated.nc-netcdf-parser_rejected`/`truncated.grib-grib-parser_rejected`/`random_bytes.nc-netcdf-unknown_magic`/`grib_magic.nc-netcdf-magic_extension_mismatch`/`netcdf_magic.grib-grib-magic_extension_mismatch`）；`::test_optional_netcdf_missing_is_stable_error`；`::test_optional_eccodes_missing_is_stable_error`；`::test_readers_are_optional_and_currently_installed`。Day 12：`tests/test_climate/test_cds.py::test_download_success_uses_part_then_atomic_replace`；`::test_download_rejects_empty_and_magic_mismatch_and_cleans_part`。Day 13 inspect 二次校验：`tests/test_climate/test_formats.py::test_extension_magic_and_parser_must_agree`；`::test_netcdf_rejects_missing_variable_empty_time_and_illegal_coords`；`tests/test_climate/test_tools.py::test_inspect_rejects_truncated_and_masquerade`；`tests/test_climate/test_pipeline.py::test_format_masquerade_rejects_without_artifact`。Day 14 真实下载：`tests/test_climate/test_cds.py::test_real_cds_minimal_netcdf_smoke` | G4 | PASS |
+| CDS-003 | Day 12：`tests/test_climate/test_cds.py::test_retry_timeout_and_rate_limit_max_three_with_backoff`；`::test_permanent_errors_do_not_retry`；`::test_allow_sample_fallback_default_false_does_not_fallback`；`::test_retries_do_not_increment_step_attempts`。Day 13 默认仍不 fallback：`tests/test_climate/test_cds.py::test_fallback_false_returns_original_timeout_error`；`tests/test_climate/test_pipeline.py::test_mock_cds_fail_without_fallback_has_no_sample` | G4 | PASS |
+| CDS-004 | Day 13：`tests/test_climate/test_cds.py::test_fallback_is_explicit_and_audited`；`::test_fallback_false_returns_original_timeout_error`；`::test_fallback_rejects_errors_not_frozen_in_spec`；`::test_fallback_switch_is_part_of_input_hash`；`::test_download_layer_never_fallbacks_even_when_flag_true`；`::test_sample_fallback_codes_match_spec`；`tests/test_climate/test_pipeline.py::test_mock_cds_timeout_explicit_fallback_then_inspect_plot_report`；`::test_mock_cds_fail_without_fallback_has_no_sample` | G4 | PASS |
+| MODEL-001 | Day 14：`evals/baselines/climate-real-9b592ba.json` `passes=3/3`；`evals/configs/climate-real.json`；`evals/climate/scenarios/cds_minimal_smoke.yaml`；`tests/test_climate/test_evals.py::test_real_agent_runs_must_be_three`；`::test_real_agent_two_pass_publishes_and_keeps_failure`；`::test_real_agent_one_pass_does_not_publish_success`；`::test_real_agent_isolated_workspaces_and_fingerprint`；`::test_climate_real_config_is_non_sensitive`；`::test_config_fingerprint_changes_with_scenario_or_commit`；`::test_agent_config_rejects_secret_fields`；`::test_real_agent_stamps_per_tool_duration_from_start_complete`；`tests/test_climate/test_cds.py::test_real_cds_minimal_netcdf_smoke` | G4 | PASS |
+| PHASE-001 | Day 10：G0～G3 PASS。Day 11：DEC-G4-001 关闭。Day 12：CDS-001～003 / SEC-002 mock PASS。Day 13：CDS-004 / TOOL-INSPECT-001 G4 mock PASS。Day 14：MODEL-001 3/3 与真实 CDS PASS。Day 15：G4 本机人工总验收 PASS；GitHub Actions 未推送 | G0～G4 | PASS (G0～G4 本机)；GAP (未推送的 GitHub Actions) |
 | DOC-001 | `tests/test_climate/test_evals.py::test_readme_offline_demo_from_empty_workspace`；`::test_readme_documents_offline_mvp_demo_and_limits` | G3 | PASS |
 
 ## 17. Definition of Done
@@ -883,11 +973,12 @@ MODEL-001 baseline 达标。
 - DEC-008：锁沿用上游阻塞语义，v0.1 不增加锁超时 API。
 - DEC-009：沿用 `QueryEngine` 每次用户输入默认 `max_turns=8`；标准离线链路最多使用 7 个模型
   turn（6 个顺序工具轮次加最终回复），恢复发生在新的用户输入中，不提高默认值。
+- **DEC-G4-001（Day 11 关闭）**：G4 科学数据依赖、格式边界、ERA5 allowlist、fixture 与 CI 禁网
+  策略已冻结，见第 14 节表格。支持 NetCDF 与 GRIB；cdsapi 仅 optional extra `climate`。
+  Day 12 已按冻结值实现 mock CDS 下载与重试；Day 13 已实现冻结格式 inspect 与显式 sample
+  fallback。Day 14 已完成固定模型 baseline 与真实 CDS smoke（见第 14 节）。
 
 ### 待决且明确阻塞
 
-- **DEC-G4-001（阻塞 G4，不阻塞 G1～G3）**：在开始 G4 前，经最小技术 spike 冻结 NetCDF/GRIB
-  读取依赖、magic/content 校验方法、ERA5 dataset/variable allowlist 和 CI 安装策略。未决期间
-  不得实现或声称完成 CDS/NetCDF/GRIB 能力。
-
-当前没有阻塞 G1 的开放决策。
+当前没有阻塞 G1～G3 的开放决策。G4 实现必须遵守已关闭的 DEC-G4-001，不得另行改依赖
+或把 GRIB 静默降级。Day 15 本机人工验收已完成；剩余外部 GAP 仅为未推送的 GitHub Actions。
