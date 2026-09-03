@@ -40,7 +40,7 @@ _STANDARD_STEPS: list[dict[str, Any]] = [
     },
 ]
 
-_TODAY_TOOL_NAMES = (
+_CORE_TOOL_NAMES = (
     "climate_init_workflow",
     "climate_plan_steps",
     "climate_acquire_data",
@@ -49,6 +49,7 @@ _TODAY_TOOL_NAMES = (
     "climate_write_report",
     "climate_read_context",
 )
+_TODAY_TOOL_NAMES = _CORE_TOOL_NAMES + ("climate_validate_artifacts",)
 
 
 def _minimal_args(tool_name: str) -> dict[str, Any]:
@@ -71,11 +72,13 @@ def _minimal_args(tool_name: str) -> dict[str, Any]:
         return {"step_id": "report", "title": "示例气候报告", "summary": "摘要"}
     if tool_name == "climate_read_context":
         return {}
+    if tool_name == "climate_validate_artifacts":
+        return {}
     raise AssertionError(f"未知工具: {tool_name}")
 
 
 def test_climate_registry_names_unique_and_schema_exportable() -> None:
-    """7 个工具名称唯一，schema 可被 to_api_schema 导出。"""
+    """默认 8 个工具名称唯一，schema 可被 to_api_schema 导出。"""
     registry = create_climate_tool_registry()
     tools = registry.list_tools()
     names = [tool.name for tool in tools]
@@ -83,7 +86,7 @@ def test_climate_registry_names_unique_and_schema_exportable() -> None:
     assert len(set(names)) == len(names)
 
     schemas = registry.to_api_schema()
-    assert len(schemas) == 7
+    assert len(schemas) == 8
     for tool, schema in zip(tools, schemas, strict=True):
         assert isinstance(tool, BaseTool)
         assert schema["name"] == tool.name
@@ -106,6 +109,7 @@ def test_rejects_extra_fields_and_invalid_uuid_and_mode() -> None:
         ("climate_analyze_plot", {**_minimal_args("climate_analyze_plot"), "unexpected": True}),
         ("climate_write_report", {**_minimal_args("climate_write_report"), "unexpected": 1}),
         ("climate_read_context", {"include_events": False, "unexpected": {}}),
+        ("climate_validate_artifacts", {**_minimal_args("climate_validate_artifacts"), "unexpected": 1}),
     ]
     for tool_name, payload in extra_cases:
         tool = registry.get(tool_name)
@@ -188,7 +192,7 @@ def test_independent_registry_does_not_overwrite_same_name() -> None:
 
 
 def test_climate_tool_names_do_not_collide_with_default_registry() -> None:
-    """REG-001：接入默认 registry 前先确认 7 个 Climate 名称与既有工具无交集。"""
+    """REG-001：接入默认 registry 前先确认 Climate 名称与既有工具无交集。"""
     default_names = {
         tool.name
         for tool in create_default_tool_registry().list_tools()
@@ -201,7 +205,7 @@ def test_climate_tool_names_do_not_collide_with_default_registry() -> None:
 
 
 def test_default_registry_has_exact_climate_tools() -> None:
-    """REG-001：默认 registry 恰好各注册一个 7 个 Climate 工具，且不静默覆盖。"""
+    """REG-001：默认 registry 恰好各注册一个 8 个 Climate 工具，且不静默覆盖。"""
     registry = create_default_tool_registry()
     names = [tool.name for tool in registry.list_tools()]
     assert len(names) == len(set(names))
@@ -222,11 +226,12 @@ def test_default_registry_has_exact_climate_tools() -> None:
 
 
 def test_read_only_classification() -> None:
-    """PERM-001：仅 climate_read_context 为只读；inspect 因写 Context 仍是 mutation。"""
+    """PERM-001：read_context 与 validate 为只读；inspect 因写 Context 仍是 mutation。"""
     registry = create_climate_tool_registry()
+    read_only = {"climate_read_context", "climate_validate_artifacts"}
     for tool in registry.list_tools():
         parsed = tool.input_model.model_validate(_minimal_args(tool.name))
-        if tool.name == "climate_read_context":
+        if tool.name in read_only:
             assert tool.is_read_only(parsed) is True
         else:
             assert tool.is_read_only(parsed) is False
@@ -240,3 +245,21 @@ def test_read_only_classification() -> None:
         assert "path" in properties
     assert plot is not None
     assert "path" in plot.input_model.model_json_schema()["properties"]
+
+
+def test_default_registry_includes_validate_and_keeps_core_seven() -> None:
+    """VAL-001 / REG-001：默认注册第八工具；include_validate=False 仍可组装核心七工具。"""
+    default = create_climate_tool_registry()
+    names = [tool.name for tool in default.list_tools()]
+    assert names == list(_TODAY_TOOL_NAMES)
+    assert names[:7] == list(_CORE_TOOL_NAMES)
+    assert names[7] == "climate_validate_artifacts"
+    core = create_climate_tool_registry(include_validate=False)
+    assert [tool.name for tool in core.list_tools()] == list(_CORE_TOOL_NAMES)
+    default_climate = [
+        tool.name
+        for tool in create_default_tool_registry().list_tools()
+        if tool.name.startswith("climate_")
+    ]
+    assert default_climate == list(_TODAY_TOOL_NAMES)
+    assert "climate_validate_artifacts" in default_climate

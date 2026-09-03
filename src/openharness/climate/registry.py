@@ -1,4 +1,4 @@
-"""Climate 独立 ToolRegistry；7 工具齐备后也供默认 registry 一次性接入。"""
+"""Climate 独立 ToolRegistry；默认注册核心七工具加只读第八工具。"""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from openharness.climate.tools import (
     ClimateInspectDatasetTool,
     ClimatePlanStepsTool,
     ClimateReadContextTool,
+    ClimateValidateArtifactsTool,
     ClimateWriteReportTool,
 )
 from openharness.tools.base import BaseTool, ToolRegistry
@@ -23,8 +24,8 @@ class ClimateToolRegistry(ToolRegistry):
         super().register(tool)
 
 
-def create_climate_tool_registry() -> ClimateToolRegistry:
-    """返回仅含 7 个 Climate 工具的独立 registry。"""
+def create_climate_tool_registry(*, include_validate: bool = True) -> ClimateToolRegistry:
+    """默认返回 8 个 Climate 工具；include_validate=False 仅用于证明核心七工具仍可独立组装。"""
     registry = ClimateToolRegistry()
     for tool in (
         ClimateInitWorkflowTool(),
@@ -36,4 +37,6 @@ def create_climate_tool_registry() -> ClimateToolRegistry:
         ClimateReadContextTool(),
     ):
         registry.register(tool)
+    if include_validate:
+        registry.register(ClimateValidateArtifactsTool())
     return registry

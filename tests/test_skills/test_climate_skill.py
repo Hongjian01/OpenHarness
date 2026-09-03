@@ -69,3 +69,28 @@ def test_climate_skill_frontmatter_and_guidance() -> None:
 
     assert "指导" in content or "guidance" in lowered
     assert "业务" in content or "business" in lowered or "implement" in lowered
+
+
+def test_climate_skill_natural_language_to_four_actions_and_forbids_free_plan() -> None:
+    """SKILL-002：自然语言映射到四类动作；禁止新 action 与任意代码执行。"""
+    content = SKILL_PATH.read_text(encoding="utf-8")
+    lowered = content.lower()
+    assert "自然语言" in content
+    assert "objective" in lowered or "目标" in content
+    assert "acquire_data" in lowered
+    assert "inspect_dataset" in lowered
+    assert "analyze_plot" in lowered
+    assert "write_report" in lowered
+    assert "sample" in lowered and "local" in lowered and "cds" in lowered
+    assert "histogram" in lowered
+    assert "y=t2m" in lowered or "y = t2m" in lowered
+    assert "climate_read_context" in lowered
+    assert "spi" in lowered
+    assert "ivt" in lowered
+    assert "tc" in lowered or "热带气旋" in content
+    assert "禁止" in content or "不得" in content
+    assert "python" in lowered
+    assert "不得发明" in content or "不得增加" in content or "禁止" in content
+    assert "第五类" in content or "新 action" in lowered or "自由" in content
+    assert "exec(" not in lowered
+    assert "subprocess" not in lowered

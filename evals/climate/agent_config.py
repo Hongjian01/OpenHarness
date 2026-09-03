@@ -10,6 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from openharness.permissions.modes import PermissionMode
+
 _SECRET_KEY = re.compile(r"(?i)^(api[_-]?key|token|password|secret|authorization|cdsapirc)$")
 _SK_TOKEN = re.compile(r"(?i)sk-[A-Za-z0-9_-]{8,}")
 REQUIRED_RUNS = 3
@@ -57,6 +59,14 @@ class ClimateRealConfig(BaseModel):
     skill: str
     allow_sample_fallback: bool = False
     cds_request: CdsSmokeRequest
+
+    @field_validator("permission_mode")
+    @classmethod
+    def _known_permission_mode(cls, value: str) -> str:
+        try:
+            return PermissionMode(value).value
+        except ValueError as exc:
+            raise ValueError("permission_mode 必须是 default、plan 或 full_auto") from exc
 
     @field_validator("allow_sample_fallback")
     @classmethod

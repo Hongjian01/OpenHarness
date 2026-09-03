@@ -8,6 +8,7 @@
 - **预计投入**：6～8 小时
 - **完成标志**：G0～G4 PASS；若外部 blocker 未解决，则诚实保持 G4 GAP、G3 MVP 仍成立
 - **上一天**：[Day 14](DAY_14_G4_REAL_AGENT_BASELINE.md)
+- **下一天**：[Day 16](DAY_16_G5_PAPER_ALIGNED_MINIMAL.md)（G4 验收后的可选论文对齐最小增量；不否定本日本身「停止功能开发」原则）
 
 ## 今日原则
 
@@ -206,7 +207,7 @@ ClimWorkflow 15 天最终报告：
 - 真实 Agent baseline：passes=3/3，min_passes=2；deepseek-v4-pro；114042/78628/71389 ms；requested/effective=cds
 - blocker/high 修复：无源码 blocker/high。文档收口：README/SPEC/面试材料去掉“G4 未实现/仅 G0”过时表述；DAY_14 EOF 多余空行
 - 剩余 GAP：未推送 GitHub Actions；Windows 上游 23 fail；real_agent TraceRecord.run_id 为 null（medium）；permission_mode 配置未驱动 checker（medium）
-  （2026-09-02 更新：GitHub Actions CI #3 已绿，远程 GAP 关闭；其余非阻塞项仍在。）
+  （2026-09-02 更新：GitHub Actions CI #3 已绿，远程 GAP 关闭。同日修复 Trace.run_id 从磁盘回填、permission_mode 驱动 checker；历史 baseline 快照不改。）
 - 安全检查：baseline/config 无 api_key/.cdsapirc/sk-/本机绝对路径；PermissionChecker 含 */.cdsapirc；默认 CI CLIMATE_INTEGRATION=0
 - 可复现 Demo：README 空 workspace sample_pipeline；恢复 climate_read_context
 - 实测简历指标：Climate 257/1；real_offline 1.0；CDS smoke 1 passed / 47.18s；real_agent 3/3

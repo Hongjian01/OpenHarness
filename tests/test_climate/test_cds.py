@@ -1046,3 +1046,225 @@ async def test_real_cds_minimal_netcdf_smoke(tmp_path: Path, caplog: pytest.LogC
     )
     _assert_no_live_secrets(context_text)
     _scan_for_secrets(acquired, inspected)
+
+
+def _offgrid_smoke_cds_request() -> dict[str, Any]:
+    """真实多候选：1 天、小区域、area 偏离 0.25° 格点，禁止 fallback。"""
+    return {
+        "dataset": "reanalysis-era5-single-levels",
+        "variables": ["2m_temperature"],
+        "area": [40.6, 116.13, 39.47, 116.88],
+        "date_start": "2025-01-01",
+        "date_end": "2025-01-01",
+        "format": "netcdf",
+        "allow_sample_fallback": False,
+    }
+
+
+@pytest.mark.climate_integration
+@pytest.mark.asyncio
+async def test_real_cds_offgrid_candidates_are_audited(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """路径 A：真实 CDS 展开 ≥2 候选；审计字段脱敏；不得 fallback 为 sample。"""
+    from openharness.climate.cds import expand_cds_candidates
+    from openharness.climate.formats import detect_magic
+    from openharness.climate.models import CdsRequestInput, loads_run_context
+
+    parsed = CdsRequestInput.model_validate(_offgrid_smoke_cds_request())
+    variants = expand_cds_candidates(parsed)
+    assert 2 <= len(variants) <= 3
+
+    caplog.set_level(logging.INFO)
+    workspace = _workspace(tmp_path)
+    registry = create_climate_tool_registry()
+    init = registry.get("climate_init_workflow")
+    plan = registry.get("climate_plan_steps")
+    acquire = registry.get("climate_acquire_data")
+    assert init and plan and acquire
+    await _invoke(init, workspace, objective=OBJECTIVE, run_id=RUN_ID)
+    await _invoke(plan, workspace, steps=STANDARD_STEPS)
+    _, acquired = await _invoke(
+        acquire,
+        workspace,
+        step_id="acquire",
+        mode="cds",
+        cds_request=_offgrid_smoke_cds_request(),
+    )
+    assert acquired["ok"] is True, json.dumps(acquired.get("error") or {}, ensure_ascii=False)
+    data = acquired["data"]
+    assert data["requested_mode"] == "cds"
+    assert data["effective_mode"] == "cds"
+    assert "fallback_reason" not in data
+    assert int(data["candidate_count"]) >= 2
+    assert int(data["candidate_index"]) >= 0
+    assert data["winning_candidate"]
+    dest = workspace / str(data["path"])
+    assert dest.is_file()
+    assert dest.suffix == ".nc"
+    assert detect_magic(dest.read_bytes()[:8]) == "netcdf"
+    assert list(workspace.rglob("*.part")) == []
+    context = loads_run_context(
+        (workspace / ".climate" / "runs" / RUN_ID / "context.json").read_text(encoding="utf-8")
+    )
+    step = next(item for item in context.steps if item.step_id == "acquire")
+    assert step.result is not None
+    assert step.result["candidate_count"] == data["candidate_count"]
+    assert step.result["winning_candidate"] == data["winning_candidate"]
+    dumped = json.dumps([acquired, context.model_dump(mode="json")], ensure_ascii=False)
+    _assert_no_live_secrets(dumped)
+    _assert_no_live_secrets(caplog.text)
+    _scan_for_secrets(acquired)
+
+
+def _offgrid_request(**overrides: Any) -> dict[str, Any]:
+    payload = _valid_request(
+        area=[40.1, 116.13, 39.07, 116.37],
+        date_start="2025-01-01",
+        date_end="2025-01-02",
+    )
+    payload.update(overrides)
+    return payload
+
+
+def test_expand_cds_candidates_max_three_and_keeps_format() -> None:
+    from openharness.climate.cds import expand_cds_candidates
+
+    on_grid = CdsRequestInput.model_validate(_valid_request())
+    aligned = expand_cds_candidates(on_grid)
+    assert 1 <= len(aligned) <= 3
+    assert aligned[0][0] == "identity"
+    assert aligned[0][1].format == "netcdf"
+    assert aligned[0][1].allow_sample_fallback is False
+
+    off_grid = CdsRequestInput.model_validate(_offgrid_request())
+    variants = expand_cds_candidates(off_grid)
+    assert 2 <= len(variants) <= 3
+    labels = [item[0] for item in variants]
+    assert labels[0] == "identity"
+    assert len(set(labels)) == len(labels)
+    payloads = [item[1].model_dump(mode="json") for item in variants]
+    areas = [tuple(item["area"]) for item in payloads]
+    assert len(set(areas)) == len(areas)
+    assert all(item["format"] == "netcdf" for item in payloads)
+    assert all(item["allow_sample_fallback"] is False for item in payloads)
+
+
+def test_candidate_first_permanent_fail_second_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openharness.climate import cds as cds_mod
+
+    monkeypatch.setattr(cds_mod.time, "sleep", lambda _seconds: None)
+    parsed = CdsRequestInput.model_validate(_offgrid_request())
+    identity_area = [float(item) for item in parsed.area]
+
+    class _SwitchClient:
+        def __init__(self) -> None:
+            self.calls: list[list[float]] = []
+
+        def retrieve(self, dataset: str, request: dict[str, Any], target: str) -> None:
+            del dataset
+            area = [float(item) for item in request["area"]]
+            self.calls.append(area)
+            path = Path(target)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if area == identity_area:
+                raise cds_mod.CdsPermanentError("invalid_request")
+            path.write_bytes((FIXTURES / "minimal_t2m.nc").read_bytes())
+
+    dest = tmp_path / "era5.nc"
+    published, audit = cds_mod.download_cds_dataset_with_candidates(
+        parsed, dest, client=_SwitchClient()
+    )
+    assert published == dest
+    assert dest.is_file()
+    assert dest.stat().st_size > 0
+    assert audit["candidate_count"] >= 2
+    assert audit["candidate_index"] >= 1
+    assert audit["winning_candidate"] != "identity"
+    assert audit["winning_candidate"]
+    dumped = json.dumps(audit)
+    assert FAKE_SECRET not in dumped
+    assert FAKE_API_KEY not in dumped
+    assert "cdsapirc" not in dumped.lower()
+
+
+def test_all_candidates_fail_returns_original_error_class(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openharness.climate import cds as cds_mod
+
+    monkeypatch.setattr(cds_mod.time, "sleep", lambda _seconds: None)
+    parsed = CdsRequestInput.model_validate(_offgrid_request())
+    client = FakeCdsClient(errors=[cds_mod.CdsPermanentError("invalid_request")] * 9)
+    dest = tmp_path / "era5.nc"
+    with pytest.raises(ClimateError) as exc_info:
+        cds_mod.download_cds_dataset_with_candidates(parsed, dest, client=client)
+    err = exc_info.value
+    assert err.code == "CLIMATE_EXTERNAL_FAILED"
+    assert err.retryable is False
+    assert not dest.exists()
+    assert list(tmp_path.glob("**/*.part")) == []
+    assert err.details.get("candidate_count") >= 2
+    dumped = json.dumps(err.to_error_object())
+    assert FAKE_SECRET not in dumped
+
+
+@pytest.mark.asyncio
+async def test_candidate_audit_is_in_toolresult_and_does_not_imply_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openharness.climate import cds as cds_mod
+
+    monkeypatch.setattr(cds_mod.time, "sleep", lambda _seconds: None)
+    parsed_area = [40.1, 116.13, 39.07, 116.37]
+
+    class _SwitchClient:
+        def retrieve(self, dataset: str, request: dict[str, Any], target: str) -> None:
+            del dataset
+            path = Path(target)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            area = [float(item) for item in request["area"]]
+            if area == parsed_area:
+                raise cds_mod.CdsPermanentError("invalid_request")
+            path.write_bytes((FIXTURES / "minimal_t2m.nc").read_bytes())
+
+    monkeypatch.setattr(cds_mod, "build_cds_client", lambda: _SwitchClient())
+    workspace = _workspace(tmp_path)
+    registry = create_climate_tool_registry()
+    init = registry.get("climate_init_workflow")
+    plan = registry.get("climate_plan_steps")
+    acquire = registry.get("climate_acquire_data")
+    assert init and plan and acquire
+    await _invoke(init, workspace, objective=OBJECTIVE, run_id=RUN_ID)
+    await _invoke(plan, workspace, steps=STANDARD_STEPS)
+    _, payload = await _invoke(
+        acquire,
+        workspace,
+        step_id="acquire",
+        mode="cds",
+        cds_request=_offgrid_request(),
+    )
+    assert payload["ok"] is True
+    data = payload["data"]
+    assert data["requested_mode"] == "cds"
+    assert data["effective_mode"] == "cds"
+    assert "fallback_reason" not in data
+    assert data["candidate_count"] >= 2
+    assert data["candidate_index"] >= 1
+    assert data["winning_candidate"]
+    _scan_for_secrets(payload)
+    context = loads_run_context(
+        (workspace / ".climate" / "runs" / RUN_ID / "context.json").read_text(encoding="utf-8")
+    )
+    step = next(item for item in context.steps if item.step_id == "acquire")
+    assert step.result is not None
+    assert step.result["requested_mode"] == "cds"
+    assert step.result["effective_mode"] == "cds"
+    assert step.result["winning_candidate"] == data["winning_candidate"]
+    succeeded = [event for event in context.events if event.type == "step_succeeded"]
+    assert succeeded[-1].data["winning_candidate"] == data["winning_candidate"]
+    dumped = json.dumps(context.model_dump(mode="json"), ensure_ascii=False)
+    assert FAKE_SECRET not in dumped
+    assert "sk-" not in dumped.lower()

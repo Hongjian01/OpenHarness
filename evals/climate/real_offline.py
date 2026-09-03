@@ -687,8 +687,13 @@ def _annotate_report_links(
     abs_ws = str(workspace)
     has_rel = bool(plot_rel and plot_rel in text) or "](.climate/" in text
     has_abs = abs_ws in text or str(Path.home()) in text
+    from openharness.climate.validate import bounded_report_text, score_report_markdown
+
     recovery["report_has_relative_plot"] = has_rel
     recovery["report_has_absolute_workspace"] = has_abs
+    recovery["report_text"] = bounded_report_text(text)
+    recovery["report_rule_score"] = score_report_markdown(text, workspace=workspace)
+    recovery["report_is_bench85"] = False
     for call in tool_calls:
         if call.get("name") == "climate_write_report":
             output = dict(call.get("output_redacted") or {})

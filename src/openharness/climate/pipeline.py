@@ -223,10 +223,14 @@ def acquire_data(
                     details={"field": "cds_request", "step_id": step_id},
                     workspace=repo.workspace,
                 )
-            from openharness.climate.cds import MEDIA_TYPES, allow_sample_fallback, download_cds_dataset
+            from openharness.climate.cds import (
+                MEDIA_TYPES,
+                allow_sample_fallback,
+                download_cds_dataset_with_candidates,
+            )
 
             try:
-                download_cds_dataset(parsed_cds, cds_dest)
+                _, cand_audit = download_cds_dataset_with_candidates(parsed_cds, cds_dest)
             except ClimateError as cds_exc:
                 if not allow_sample_fallback(parsed_cds, cds_exc):
                     raise
@@ -239,6 +243,10 @@ def acquire_data(
                     "effective_mode": "sample",
                     "fallback_reason": cds_exc.code,
                 }
+                if isinstance(cds_exc.details.get("candidate_count"), int):
+                    audit["candidate_count"] = cds_exc.details["candidate_count"]
+                if isinstance(cds_exc.details.get("candidate_index"), int):
+                    audit["candidate_index"] = cds_exc.details["candidate_index"]
             else:
                 digest_bytes = hashlib.sha256(cds_dest.read_bytes()).hexdigest()
                 published = PublishedFile(
@@ -251,6 +259,7 @@ def acquire_data(
                 audit = {
                     "requested_mode": "cds",
                     "effective_mode": "cds",
+                    **cand_audit,
                 }
         elif mode == "local":
             if source_file is None or dest_relative is None:
@@ -588,6 +597,28 @@ def write_report(
         _cleanup_output_parts(repo.workspace, resolved)
         _record_step_failure(state, started, step_id, exc)
         raise
+
+
+def validate_artifacts(
+    workspace: Path,
+    *,
+    run_id: str | None,
+) -> tuple[dict[str, Any], str, int]:
+    """只读产物规则校验；不写 Context、不改源数据。"""
+    from openharness.climate.validate import validate_run_artifacts
+
+    repo = ContextRepository(workspace)
+    if repo.has_pending_active_run_transaction():
+        raise climate_error(
+            "CLIMATE_RECOVERY_REQUIRED",
+            "存在未完成的 active-run 事务，请先执行受权限控制的恢复 mutation",
+            details={"reason": "pending_wal"},
+            workspace=workspace,
+        )
+    resolved = _resolve_run_id(repo, run_id)
+    context = repo.load_run(resolved)
+    data = validate_run_artifacts(workspace, run_id=resolved)
+    return data, context.run_id, context.version
 
 
 def read_context(

@@ -34,6 +34,8 @@ ERROR_RETRYABLE: dict[str, bool] = {
     "CLIMATE_EXTERNAL_RATE_LIMIT": True,
     "CLIMATE_EXTERNAL_FAILED": False,
     "CLIMATE_HOOK_BLOCKED": False,
+    "CLIMATE_VALIDATION_FAILED": False,
+    "CLIMATE_METADATA_REJECTED": False,
 }
 
 # details 允许的安全诊断键（ERR-002）
@@ -51,6 +53,10 @@ _DETAILS_ALLOWLIST: frozenset[str] = frozenset(
         "expected_version",
         "actual_version",
         "schema_version",
+        "check",
+        "candidate_index",
+        "candidate_count",
+        "winning_candidate",
     }
 )
 

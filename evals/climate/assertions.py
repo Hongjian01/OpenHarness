@@ -131,6 +131,8 @@ def _evaluate_one(trace: TraceRecord, spec: HardAssertionSpec) -> AssertionResul
         return _hook_provenance(trace, spec)
     if spec.type == "blocked_side_effect_free":
         return _blocked_side_effect_free(trace, spec)
+    if spec.type == "report_quality_rules":
+        return _report_quality_rules(trace, spec)
     return _fail(spec, f"未知 hard assertion 类型: {spec.type}")
 
 
@@ -222,6 +224,59 @@ def _blocked_side_effect_free(trace: TraceRecord, spec: HardAssertionSpec) -> As
         and recovery.get("hook_blocked_before_execute") is True
     )
     return _ok(spec, passed, "ok" if passed else f"blocked 场景仍有副作用: {recovery}")
+
+
+def _report_quality_rules(trace: TraceRecord, spec: HardAssertionSpec) -> AssertionResult:
+    """离线规则级报告质量；明确不是 Bench-85 / 论文 Report Score。"""
+    expected = spec.expected
+    if not isinstance(expected, dict):
+        return _fail(spec, "report_quality_rules 的 expected 必须是映射")
+    recovery = trace.recovery or {}
+    text = str(recovery.get("report_text") or "")
+    relative = recovery.get("report_has_relative_plot")
+    absolute = recovery.get("report_has_absolute_workspace")
+    for item in trace.tool_calls:
+        if item.name == "climate_write_report":
+            flags = item.output_redacted or {}
+            if relative is None:
+                relative = flags.get("has_relative_plot")
+            if absolute is None:
+                absolute = flags.get("has_absolute_workspace")
+    score = recovery.get("report_rule_score")
+    if not isinstance(score, int):
+        from openharness.climate.validate import score_report_markdown
+
+        score = score_report_markdown(text)
+    min_chars = int(expected.get("min_chars") or 0)
+    headings = expected.get("required_headings") or []
+    missing = [item for item in headings if isinstance(item, str) and item not in text]
+    secrets = _report_has_secret(text)
+    bench = recovery.get("report_is_bench85") is True
+    passed = (
+        len(text) >= min_chars
+        and not missing
+        and (expected.get("relative_links") is not True or relative is True)
+        and (expected.get("no_absolute_path") is not True or absolute is False)
+        and (expected.get("no_secrets") is not True or secrets is False)
+        and int(score) >= int(expected.get("min_score") or 0)
+        and (expected.get("not_bench85") is not True or bench is False)
+    )
+    if passed:
+        return _ok(spec, True, "ok")
+    return _ok(
+        spec,
+        False,
+        f"报告规则未通过: chars={len(text)} missing={missing} score={score}",
+    )
+
+
+def _report_has_secret(text: str) -> bool:
+    lowered = text.lower()
+    if "sk-" in lowered or "cds-token-" in lowered or ".cdsapirc" in lowered:
+        return True
+    if "api_key=" in lowered or "token=" in lowered:
+        return True
+    return False
 
 
 def _artifacts_match(trace: TraceRecord, spec: HardAssertionSpec) -> AssertionResult:

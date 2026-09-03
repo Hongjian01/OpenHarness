@@ -100,7 +100,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
 
 
 def _register_climate_tools(registry: ToolRegistry) -> None:
-    """一次性注册完整 7 个 Climate 工具；名称冲突时拒绝而不是静默覆盖。"""
+    """一次性注册默认 Climate 工具（核心七工具加只读校验）；名称冲突时拒绝而不是静默覆盖。"""
     from openharness.climate.registry import create_climate_tool_registry
 
     for tool in create_climate_tool_registry().list_tools():

@@ -1,4 +1,4 @@
-"""G4 real_agent adapter：真实模型 + Climate 七工具，独立空 workspace。"""
+"""G4 real_agent adapter：真实模型 + 默认 Climate 工具，独立空 workspace。"""
 
 from __future__ import annotations
 
@@ -66,18 +66,20 @@ async def run_real_agent_once_async(
     model_invoked = False
     error_code: str | None = None
     settings = load_settings()
+    permission_mode = PermissionMode(config.permission_mode)
     settings = settings.model_copy(
         update={
             "active_profile": config.profile,
             "model": config.model,
             "effort": config.effort,
             "max_turns": config.max_turns,
+            "permission": settings.permission.model_copy(update={"mode": permission_mode}),
         }
     )
     settings = settings.materialize_active_profile()
     api_client = _resolve_api_client_from_settings(settings)
     registry = create_climate_tool_registry()
-    checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
+    checker = build_permission_checker(config)
     system_prompt = _system_prompt(config)
     user_prompt = _user_prompt(scenario, config, run_index)
     engine = QueryEngine(
@@ -135,7 +137,7 @@ async def run_real_agent_once_async(
     # 超时或异常时，给尚未 Completed 的工具补上墙钟耗时
     _stamp_tool_duration(tool_calls, tool_started)
     duration_ms = _elapsed_ms(started)
-    context_status, version, artifacts, acquire_fields = _workspace_facts(workspace)
+    context_status, version, artifacts, acquire_fields, run_id = _workspace_facts(workspace)
     for call in tool_calls:
         if call["name"] == "climate_acquire_data" and acquire_fields:
             merged = dict(call.get("output_redacted") or {})
@@ -146,7 +148,7 @@ async def run_real_agent_once_async(
         {
             "suite_version": SUITE_VERSION,
             "scenario_id": scenario.id,
-            "run_id": None,
+            "run_id": run_id,
             "mode": EvalMode.real_agent,
             "started_at": started_at,
             "finished_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -167,6 +169,11 @@ async def run_real_agent_once_async(
         }
     )
     return trace
+
+
+def build_permission_checker(config: ClimateRealConfig) -> PermissionChecker:
+    """用 agent-config 的 permission_mode 构建 checker，禁止写死 FULL_AUTO。"""
+    return PermissionChecker(PermissionSettings(mode=PermissionMode(config.permission_mode)))
 
 
 async def _auto_allow(_tool: str, _input: str) -> bool:
@@ -285,17 +292,20 @@ def _public_output(tool_name: str, data: dict[str, Any], workspace: Path) -> dic
 
 def _workspace_facts(
     workspace: Path,
-) -> tuple[str | None, int | None, list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[str | None, int | None, list[dict[str, Any]], dict[str, Any], str | None]:
     climate = workspace / ".climate"
     if not (climate / "index.json").is_file():
-        return None, None, [], {}
+        return None, None, [], {}, None
     try:
         index = loads_workspace_index((climate / "index.json").read_text(encoding="utf-8"))
+        run_id = index.active_run_id
+        if not run_id:
+            return None, None, [], {}, None
         context = loads_run_context(
-            (climate / "runs" / index.active_run_id / "context.json").read_text(encoding="utf-8")
+            (climate / "runs" / run_id / "context.json").read_text(encoding="utf-8")
         )
     except Exception:
-        return None, None, [], {}
+        return None, None, [], {}, None
     artifacts: list[dict[str, Any]] = []
     for item in context.artifacts:
         artifacts.append(
@@ -311,7 +321,7 @@ def _workspace_facts(
             for key in ("requested_mode", "effective_mode", "fallback_reason"):
                 if key in step.result:
                     acquire_fields[key] = step.result[key]
-    return context.status, context.version, artifacts, acquire_fields
+    return context.status, context.version, artifacts, acquire_fields, run_id
 
 
 def _stable_error_code(exc: BaseException) -> str:

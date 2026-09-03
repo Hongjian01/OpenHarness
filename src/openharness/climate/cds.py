@@ -227,6 +227,56 @@ def download_cds_dataset(
     raise last_error
 
 
+def expand_cds_candidates(request: CdsRequestInput) -> list[tuple[str, CdsRequestInput]]:
+    """同一科学意图下展开 ≤3 个已登记合法变体；保持 format，不改 fallback 开关。"""
+    from openharness.climate.metadata import MAX_CANDIDATES, expand_area_variants
+
+    variants: list[tuple[str, CdsRequestInput]] = [("identity", request)]
+    seen = {tuple(float(item) for item in request.area)}
+    for label, area in expand_area_variants(list(request.area)):
+        key = tuple(float(item) for item in area)
+        if key in seen:
+            continue
+        seen.add(key)
+        variants.append((label, request.model_copy(update={"area": area})))
+        if len(variants) >= MAX_CANDIDATES:
+            break
+    return variants
+
+
+def download_cds_dataset_with_candidates(
+    request: CdsRequestInput,
+    dest_path: Path,
+    *,
+    client: CdsClientProtocol | None = None,
+) -> tuple[Path, dict[str, Any]]:
+    """顺序尝试目录登记的候选；每候选内遵守 CDS-003；不隐含 sample fallback。"""
+    from openharness.climate.metadata import validate_cds_request_against_catalog
+
+    rejected = validate_cds_request_against_catalog(request)
+    if rejected is not None:
+        raise rejected
+    if client is None:
+        client = build_cds_client()
+    candidates = expand_cds_candidates(request)
+    last_error: ClimateError | None = None
+    for index, (label, candidate) in enumerate(candidates):
+        try:
+            published = download_cds_dataset(candidate, dest_path, client=client)
+            return published, {
+                "candidate_count": len(candidates),
+                "candidate_index": index,
+                "winning_candidate": label,
+            }
+        except ClimateError as exc:
+            last_error = exc
+            continue
+    assert last_error is not None
+    last_error.details["candidate_count"] = len(candidates)
+    last_error.details["candidate_index"] = len(candidates) - 1
+    raise last_error
+
+
 def _validate_part(part_path: Path, dest_path: Path, claimed_format: str) -> None:
     from openharness.climate.formats import validate_published_artifact
 

@@ -812,11 +812,13 @@ async def test_tool_permission_classification_and_path_forwarding() -> None:
     """PERM-001：写工具 is_read_only=False；含 path 的 schema 可供 QueryEngine 提取。"""
     registry = create_climate_tool_registry()
     read = registry.get("climate_read_context")
+    validate = registry.get("climate_validate_artifacts")
     inspect = registry.get("climate_inspect_dataset")
     acquire = registry.get("climate_acquire_data")
     plot = registry.get("climate_analyze_plot")
-    assert read and inspect and acquire and plot
+    assert read and validate and inspect and acquire and plot
     assert read.is_read_only(read.input_model.model_validate({})) is True
+    assert validate.is_read_only(validate.input_model.model_validate({})) is True
     assert inspect.is_read_only(inspect.input_model.model_validate({"step_id": "inspect"})) is False
     assert acquire.is_read_only(
         acquire.input_model.model_validate({"step_id": "acquire", "mode": "sample"})

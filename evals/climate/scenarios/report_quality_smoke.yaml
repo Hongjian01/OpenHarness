@@ -1,0 +1,108 @@
+id: report_quality_smoke
+description: >
+  离线轻量报告质量规则断言。这不是 Climate-Agent-Bench-85，也不是论文 Report Score 替代。
+  联网 LLM-as-judge 默认关闭。
+mode: real_offline
+initial_files: {}
+turns:
+  - role: user
+    content: 分析示例温度序列并生成报告
+expected_tool_sequence:
+  - climate_init_workflow
+  - climate_plan_steps
+  - climate_acquire_data
+  - climate_inspect_dataset
+  - climate_analyze_plot
+  - climate_write_report
+  - climate_read_context
+tool_invocations:
+  - name: climate_init_workflow
+    session: 1
+    input:
+      objective: 分析示例温度序列并生成报告
+      run_id: 0e8e6eb4-93f2-4ce7-8d22-91a28fa99314
+  - name: climate_plan_steps
+    session: 1
+    input:
+      steps:
+        - step_id: acquire
+          action: acquire_data
+          title: 获取数据
+          depends_on: []
+        - step_id: inspect
+          action: inspect_dataset
+          title: 检查数据
+          depends_on: [acquire]
+        - step_id: plot
+          action: analyze_plot
+          title: 绘制图表
+          depends_on: [inspect]
+        - step_id: report
+          action: write_report
+          title: 撰写报告
+          depends_on: [inspect, plot]
+  - name: climate_acquire_data
+    session: 1
+    input:
+      step_id: acquire
+      mode: sample
+  - name: climate_inspect_dataset
+    session: 1
+    input:
+      step_id: inspect
+  - name: climate_analyze_plot
+    session: 1
+    input:
+      step_id: plot
+      chart_type: line
+      x: date
+      y: temperature_c
+      title: 示例温度
+  - name: climate_write_report
+    session: 1
+    input:
+      step_id: report
+      title: 示例气候报告
+      summary: 离线 sample 流水线完成。
+  - name: climate_read_context
+    session: 1
+    input:
+      include_events: true
+      event_limit: 100
+hard_assertions:
+  - id: seq
+    type: tool_sequence
+    expected:
+      - climate_init_workflow
+      - climate_plan_steps
+      - climate_acquire_data
+      - climate_inspect_dataset
+      - climate_analyze_plot
+      - climate_write_report
+      - climate_read_context
+  - id: tools_ok
+    type: all_tool_results_ok
+    expected: true
+  - id: status
+    type: final_run_status
+    expected: completed
+  - id: report_links
+    type: report_relative_links
+    expected: true
+  - id: report_quality
+    type: report_quality_rules
+    expected:
+      min_chars: 80
+      required_headings:
+        - "## Inspect"
+        - "## Plot"
+        - "## Summary"
+      relative_links: true
+      no_absolute_path: true
+      no_secrets: true
+      min_score: 6
+      not_bench85: true
+  - id: no_net
+    type: network_isolated
+    expected: true
+timeout_seconds: 120

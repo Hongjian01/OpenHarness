@@ -22,6 +22,7 @@ from openharness.climate.pipeline import (
     inspect_dataset,
     plan_steps,
     read_context,
+    validate_artifacts,
     write_report,
 )
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
@@ -183,6 +184,19 @@ class ClimateReadContextInput(BaseModel):
     run_id: str | None = None
     include_events: bool = False
     event_limit: int = Field(default=100, ge=1, le=1000)
+
+    @field_validator("run_id")
+    @classmethod
+    def _uuid(cls, value: str | None) -> str | None:
+        return _optional_uuid_v4(value)
+
+
+class ClimateValidateArtifactsInput(BaseModel):
+    """只读产物校验；禁止 code/shell/expr 等自由执行字段。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str | None = None
 
     @field_validator("run_id")
     @classmethod
@@ -353,5 +367,26 @@ class ClimateReadContextTool(ClimateTool):
                 run_id=arguments.run_id,
                 include_events=arguments.include_events,
                 event_limit=arguments.event_limit,
+            ),
+        )
+
+
+class ClimateValidateArtifactsTool(ClimateTool):
+    name = "climate_validate_artifacts"
+    description = "只读校验当前 run 的 dataset/profile/plot/report 规则完整性；不修改源数据。"
+    input_model = ClimateValidateArtifactsInput
+
+    def is_read_only(self, arguments: BaseModel) -> bool:
+        del arguments
+        return True
+
+    async def execute(
+        self, arguments: ClimateValidateArtifactsInput, context: ToolExecutionContext
+    ) -> ToolResult:
+        workspace = Path(context.cwd).resolve()
+        return self._result(
+            lambda: validate_artifacts(
+                workspace,
+                run_id=arguments.run_id,
             ),
         )

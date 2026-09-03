@@ -388,6 +388,7 @@ def test_climate_real_config_is_non_sensitive() -> None:
     assert "sk-" not in lowered
     assert data["profile"] == "openai-compatible"
     assert data["model"] == "deepseek-v4-pro"
+    assert data["permission_mode"] == "full_auto"
     assert data["max_turns"] == 200
     assert data["allow_sample_fallback"] is False
     assert data["cds_request"]["allow_sample_fallback"] is False
@@ -957,6 +958,93 @@ def test_agent_config_rejects_secret_fields(tmp_path: Path) -> None:
         load_agent_config(path)
 
 
+def test_agent_config_rejects_unknown_permission_mode() -> None:
+    """permission_mode 必须是 OpenHarness 已有枚举，不能写任意字符串。"""
+    from evals.climate.agent_config import ClimateRealConfig
+
+    config = load_agent_config(ROOT / "evals" / "configs" / "climate-real.json")
+    payload = config.model_dump(mode="json")
+    payload["permission_mode"] = "bypass"
+    with pytest.raises(ValueError, match="permission_mode"):
+        ClimateRealConfig.model_validate(payload)
+
+
+def test_real_agent_permission_checker_follows_config() -> None:
+    """checker 必须使用 agent-config 的 permission_mode，不得写死 FULL_AUTO。"""
+    from evals.climate.real_agent import build_permission_checker
+    from openharness.permissions.modes import PermissionMode
+
+    config = load_agent_config(ROOT / "evals" / "configs" / "climate-real.json")
+    auto = build_permission_checker(config)
+    allowed = auto.evaluate("climate_acquire_data", is_read_only=False)
+    assert allowed.allowed is True
+    assert allowed.requires_confirmation is False
+
+    plan = build_permission_checker(config.model_copy(update={"permission_mode": "plan"}))
+    blocked = plan.evaluate("climate_acquire_data", is_read_only=False)
+    assert blocked.allowed is False
+    assert PermissionMode(config.permission_mode) is PermissionMode.FULL_AUTO
+
+    default = build_permission_checker(config.model_copy(update={"permission_mode": "default"}))
+    confirm = default.evaluate("climate_acquire_data", is_read_only=False)
+    assert confirm.requires_confirmation is True
+
+
+def test_real_agent_trace_run_id_comes_from_workspace_index(tmp_path: Path) -> None:
+    """real_agent Trace.run_id 必须来自磁盘 active_run_id，不得写死 null。"""
+    from evals.climate.real_agent import _workspace_facts
+
+    run_id = "0e8e6eb4-93f2-4ce7-8d22-91a28fa99314"
+    climate = tmp_path / ".climate"
+    (climate / "runs" / run_id).mkdir(parents=True)
+    (climate / "index.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "version": 1,
+                "active_run_id": run_id,
+                "run_ids": [run_id],
+                "updated_at": "2026-08-22T14:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (climate / "runs" / run_id / "context.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "version": 2,
+                "run_id": run_id,
+                "objective": "分析示例温度序列并生成报告",
+                "status": "running",
+                "created_at": "2026-08-22T14:00:00Z",
+                "updated_at": "2026-08-22T14:03:00Z",
+                "steps": [],
+                "artifacts": [],
+                "events": [
+                    {
+                        "sequence": 1,
+                        "timestamp": "2026-08-22T14:00:00Z",
+                        "type": "run_created",
+                        "step_id": None,
+                        "data": {},
+                    }
+                ],
+                "last_error": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    status, version, artifacts, _acquire, found = _workspace_facts(tmp_path)
+    assert found == run_id
+    assert status == "running"
+    assert version == 2
+    assert artifacts == []
+    empty_status, _, _, _, empty_id = _workspace_facts(tmp_path / "missing")
+    assert empty_status is None
+    assert empty_id is None
+
+
 def test_real_agent_two_pass_publishes_and_keeps_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1075,3 +1163,100 @@ def test_real_agent_isolated_workspaces_and_fingerprint(
         git_commit=str(payload["git_commit"]),
     )
     assert changed != payload["fingerprint"]
+
+
+def test_report_quality_smoke_yaml_disclaims_bench85() -> None:
+    """EVAL-004：场景必须声明不是 Bench-85 / 论文 Report Score 替代。"""
+    path = ROOT / "evals" / "climate" / "scenarios" / "report_quality_smoke.yaml"
+    text = path.read_text(encoding="utf-8")
+    scenario = load_scenario(path)
+    assert scenario.id == "report_quality_smoke"
+    assert scenario.mode is EvalMode.real_offline
+    lowered = text.lower()
+    assert "bench-85" in lowered
+    assert "不是" in text or "非" in text
+    assert "report score" in lowered
+    assert "替代" in text
+    assert any(item.type == "report_quality_rules" for item in scenario.hard_assertions)
+
+
+def test_report_quality_rules_assertion_on_fixture_trace() -> None:
+    """EVAL-004：规则级报告质量断言；默认不联网、不引入 LLM judge。"""
+    from evals.climate.assertions import evaluate_hard_assertions
+    from evals.climate.models import HardAssertionSpec, TraceRecord
+
+    spec = HardAssertionSpec(
+        id="report_quality",
+        type="report_quality_rules",
+        expected={
+            "min_chars": 40,
+            "required_headings": ["## Inspect", "## Plot", "## Summary"],
+            "relative_links": True,
+            "no_absolute_path": True,
+            "no_secrets": True,
+            "min_score": 6,
+            "not_bench85": True,
+        },
+    )
+    recovery = {
+        "report_text": (
+            "# 示例气候报告\n\n"
+            "- run_id: 0e8e6eb4-93f2-4ce7-8d22-91a28fa99314\n"
+            "## Inspect\n- row_count: 30\n"
+            "## Plot\n![plot-plot](.climate/output/run/plot-plot.svg)\n"
+            "## Summary\n离线 sample 流水线完成。\n"
+        ),
+        "report_has_relative_plot": True,
+        "report_has_absolute_workspace": False,
+        "report_rule_score": 8,
+        "report_is_bench85": False,
+    }
+    trace = TraceRecord.model_validate(
+        _minimal_trace(
+            mode="real_offline",
+            synthetic=False,
+            tools_executed=True,
+            counts_toward_real_pass_rate=True,
+            recovery=recovery,
+            tool_calls=[
+                {
+                    "sequence": 1,
+                    "name": "climate_write_report",
+                    "input_redacted": {"title": "示例气候报告"},
+                    "is_error": False,
+                    "error_code": None,
+                    "duration_ms": 1,
+                    "output_redacted": {
+                        "has_relative_plot": True,
+                        "has_absolute_workspace": False,
+                    },
+                }
+            ],
+        )
+    )
+    results = evaluate_hard_assertions(trace, [spec])
+    assert results[0].passed is True
+    assert "bench-85" not in results[0].message.lower() or "不是" in results[0].message
+
+
+def test_report_quality_smoke_real_offline(tmp_path: Path) -> None:
+    """EVAL-004：离线跑 report_quality_smoke；默认禁网；不计入改写 G4 baseline。"""
+    scenario = load_scenario(
+        ROOT / "evals" / "climate" / "scenarios" / "report_quality_smoke.yaml"
+    )
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    trace = run_real_offline(scenario, workspace=workspace)
+    results = evaluate_hard_assertions(trace, list(scenario.hard_assertions))
+    failed = [item for item in results if not item.passed]
+    assert failed == [], [item.message for item in failed]
+    assert trace.network_isolated is True
+    assert trace.synthetic is False
+    score = (trace.recovery or {}).get("report_rule_score")
+    assert isinstance(score, int)
+    assert 6 <= score <= 10
+    assert (trace.recovery or {}).get("report_is_bench85") is False
+    baseline = ROOT / "evals" / "baselines" / "climate-real-9b592ba.json"
+    original = baseline.read_bytes()
+    assert original  # 历史 G4 证据不得被本测试改写
+    assert baseline.read_bytes() == original
